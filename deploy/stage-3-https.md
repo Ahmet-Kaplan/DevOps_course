@@ -1,386 +1,239 @@
-# HTTPS with Let's Encrypt + host nginx (Debian 13)
+# Stage 3: HTTPS with Let's Encrypt
 
-Goal: `https://devops.gulfheight.com` served by the host nginx with a free,
-automatically renewed Let's Encrypt certificate, proxying to the containers
-on `127.0.0.1:3000` (API) and `127.0.0.1:8080` (frontend).
+[README](../README.md) · [Stage 1](stage-1-ip-http.md) · [Stage 2](stage-2-domain-http.md) · **Stage 3** · [Stage 4](stage-4-automated-deploys.md) · [Stage 5](../ansible/README.md)
 
-Files used from this repository:
+The site has a name, but everything still travels as readable text and the browser says *Not
+secure*. Now you ask Let's Encrypt for a free certificate, proving that you control
+`devops.gulfheight.com`, and the proxy switches itself to HTTPS. Nothing new is installed on the VM:
+certbot, the Let's Encrypt client, runs as a one-off container.
 
-| File | Purpose |
-|------|---------|
-| `deploy/nginx/bootstrap/devops.gulfheight.com.http-only.conf` | Temporary HTTP-only config, used **before** the certificate exists |
-| `deploy/nginx/conf.d/devops.gulfheight.com.conf` | The real production config (HTTPS, HSTS, proxying) |
+**By the end:** `https://devops.gulfheight.com` shows a padlock, every `http://` address redirects
+there, and the certificate renews itself.
 
-Both are installed under **the same name**:
-`/etc/nginx/conf.d/devops.gulfheight.com.conf`.
-
----
-
-## 0. Prerequisites
-
-* Google Cloud VM prepared with [`gcp-vm-setup.md`](gcp-vm-setup.md):
-  nginx installed, the VPC firewall rule `allow-http-https` opens tcp:80 and
-  tcp:443 to VMs tagged `http-server` / `https-server` (and the VM carries those
-  tags), app deployed with `./deploy/deploy.sh`.
-* DNS set up with [`cloudflare-dns-guide.md`](cloudflare-dns-guide.md), record
-  in **DNS only (gray cloud)** mode:
-
-  ```bash
-  laptop$ dig +short devops.gulfheight.com @1.1.1.1    # must print YOUR server's IP
-  ```
-
-## How HTTP-01 validation works
-
-Let's Encrypt only issues a certificate to someone who **controls** the domain.
-With the HTTP-01 challenge, proof of control looks like this:
-
-```
-certbot (on your server)                     Let's Encrypt (the CA)
-  |-- "I want a cert for devops.gulfheight.com" -->|
-  |<-- "Then serve token XYZ at                ----|
-  |     http://devops.gulfheight.com/.well-known/acme-challenge/XYZ"
-  | puts the token where nginx serves it
-  |-- "ready" ----------------------------------->|
-  |                    CA resolves DNS, connects to YOUR IP on PORT 80,
-  |                    fetches the token from several network vantage points
-  |<-- "valid - here is your certificate" --------|
+```text
+ [certbot]  1. "a certificate for devops.gulfheight.com, please"  -->  [Let's Encrypt]
+ one-off container (NEW)                                                    |
+     | writes a token file into a volume shared with the proxy              | 2. GET http://devops.gulfheight.com
+     v                                                                      |    /.well-known/acme-challenge/<token>
+ [proxy :80 and :443 (NEW)]  <----------------------------------------------'
+     3. certificate lands in the "letsencrypt" volume; restart -> HTTPS
 ```
 
-Hence the hard requirements: **DNS points to this server** and **port 80 is
-reachable from the internet**.
+Same conventions as in [Stage 1](stage-1-ip-http.md): `laptop$` or `vm$` shows where a command runs.
+Before you start, `dig +short devops.gulfheight.com @1.1.1.1` must print your VM's IP
+([Stage 2](stage-2-domain-http.md)).
 
-## 1. Why a bootstrap config? (the chicken-and-egg problem)
+> **Concept: TLS certificate.** A certificate is an ID card that says "I am devops.gulfheight.com",
+> signed by a trusted notary (Let's Encrypt) whose signature every browser can check. Before signing,
+> the notary checks that you control the name: it fetches a random token from
+> `http://devops.gulfheight.com/.well-known/acme-challenge/` (the *HTTP-01 challenge*).
 
-The production config contains
+## 1. Copy the whole `deploy/` folder
 
-```nginx
-ssl_certificate /etc/letsencrypt/live/devops.gulfheight.com/fullchain.pem;
+Why: from now on the VM also needs the renewal timer (`deploy/systemd/`) and the helper scripts.
+
+```console
+laptop$ scp -r deploy <you>@<VM-IP>:/opt/devops-workshop/
+vm$ ls /opt/devops-workshop/deploy /opt/devops-workshop/deploy/systemd
 ```
 
-On a fresh server that file does not exist, so `nginx -t` fails and nginx
-refuses to load the config. But to *get* the file, we need a working nginx on
-port 80. The bootstrap config breaks the cycle: it is plain HTTP only, serves
-the ACME challenge directory and already proxies the app.
+You should see `deploy.sh`, `nginx`, `systemd` and `tls.sh` (plus these guides), and in `systemd/`
+the two files `bugsquash-tls-renew.service` and `bugsquash-tls-renew.timer`.
 
-## 2. Install certbot
+## 2. Rehearse with a staging certificate
 
-```bash
-deploy@server$ sudo apt update
-deploy@server$ sudo apt install -y certbot python3-certbot-nginx
-deploy@server$ certbot --version
+Why: Let's Encrypt limits mistakes (for example 5 failed validations per name per hour); its
+*staging* server has generous limits and issues test certificates that browsers do not trust,
+which makes it perfect for a rehearsal.
+
+```console
+vm$ cd /opt/devops-workshop
+vm$ docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm certbot \
+      certonly --webroot -w /var/www/certbot -d devops.gulfheight.com \
+      --email <your-email> --agree-tos --no-eff-email --staging
 ```
 
-`python3-certbot-nginx` is the plugin that lets certbot read and edit nginx
-configs. The Debian package also installs and enables the systemd timer
-`certbot.timer` for automatic renewal (step 7).
+`run --rm certbot` starts a one-off certbot container and deletes it afterwards. `certonly --webroot
+-w /var/www/certbot` means: only fetch the certificate, and put the token in the shared folder that
+the proxy serves. Use an e-mail address you read (Let's Encrypt rejects `example.com`), or replace
+`--email <your-email>` with `--register-unsafely-without-email`.
 
-## 3. Install the bootstrap config
+You should see:
 
-```bash
-deploy@server$ cd /opt/devops-workshop
-deploy@server$ sudo mkdir -p /var/www/certbot           # ACME webroot used by our configs
-deploy@server$ sudo cp deploy/nginx/bootstrap/devops.gulfheight.com.http-only.conf \
-                       /etc/nginx/conf.d/devops.gulfheight.com.conf
-deploy@server$ sudo nginx -t
-deploy@server$ sudo systemctl reload nginx
+```text
+Account registered.
+Requesting a certificate for devops.gulfheight.com
+
+Successfully received certificate.
+Certificate is saved at: /etc/letsencrypt/live/devops.gulfheight.com/fullchain.pem
+Key is saved at:         /etc/letsencrypt/live/devops.gulfheight.com/privkey.pem
+This certificate expires on 2027-01-11.
 ```
 
-* `nginx -t` parses **all** config files and checks referenced files exist,
-  without touching the running server. Always run it before a reload.
-* `reload` sends **SIGHUP** to the nginx master process: it re-reads the
-  config, starts new worker processes, and lets the old workers finish their
-  current requests before exiting. No dropped connections - unlike `restart`
-  (stop + start). Same signal ideas as `docker stop` sending SIGTERM to a
-  container's PID 1.
+## 3. Switch the proxy to HTTPS
 
-Test from your laptop:
+Why: the proxy chooses its config when it starts; after a restart it finds the certificate and
+turns HTTPS on by itself.
 
-```bash
-laptop$ curl -I http://devops.gulfheight.com/                  # 200 from the frontend container
-laptop$ curl http://devops.gulfheight.com/api/health; echo      # JSON from the backend
-
-# The ACME path, end to end:
-deploy@server$ sudo mkdir -p /var/www/certbot/.well-known/acme-challenge
-deploy@server$ echo ok | sudo tee /var/www/certbot/.well-known/acme-challenge/ping
-laptop$ curl http://devops.gulfheight.com/.well-known/acme-challenge/ping    # prints: ok
-deploy@server$ sudo rm /var/www/certbot/.well-known/acme-challenge/ping
+```console
+vm$ docker compose -f docker-compose.prod.yml --env-file .env.prod restart proxy
+vm$ docker compose -f docker-compose.prod.yml --env-file .env.prod logs proxy | grep select-site-config
+laptop$ curl -I http://devops.gulfheight.com/
+laptop$ curl https://devops.gulfheight.com/
 ```
 
-If any of this fails, fix it now (see [Troubleshooting](#8-troubleshooting)) -
-certbot would fail for the same reason, and failed attempts count against
-Let's Encrypt's rate limits.
+You should see the new log line, the redirect, and an error that is **correct** for a staging
+certificate (signed by a test notary nobody trusts):
 
-## 4. Obtain the certificate with `certbot --nginx`
-
-```bash
-deploy@server$ sudo certbot --nginx -d devops.gulfheight.com
-```
-
-> First time, or still experimenting? Add `--staging` (alias `--test-cert`).
-> Staging certificates are not trusted by browsers, but staging has much
-> higher rate limits. When everything works, run the command again without
-> `--staging` and choose to replace the certificate.
-
-### The prompts
-
-| Prompt | What to answer | Why |
-|--------|----------------|-----|
-| Email address | a real address you read | Account recovery and important notices. (Let's Encrypt no longer sends expiry reminder emails, so monitoring renewal is up to you - step 7.) |
-| Terms of Service | `Y` | required |
-| Share email with the EFF | your choice | newsletter only |
-| Redirect HTTP to HTTPS? | redirect (if asked) | Newer certbot versions add the redirect without asking. We replace the config in step 5 anyway |
-
-Non-interactive equivalent (handy for scripts):
-
-```bash
-sudo certbot --nginx -d devops.gulfheight.com \
-     --agree-tos -m you@example.com --no-eff-email --redirect
-```
-
-### What certbot just did
-
-1. Created an ACME **account** and key under `/etc/letsencrypt/accounts/`.
-2. Found the `server` block with `server_name devops.gulfheight.com` in our
-   bootstrap file, injected a temporary location for the challenge token,
-   reloaded nginx, let the CA validate, then removed it again.
-3. Saved the certificate:
-
-   ```
-   /etc/letsencrypt/
-   |-- archive/devops.gulfheight.com/   fullchain1.pem, privkey1.pem, ... (real files, one set per renewal)
-   |-- live/devops.gulfheight.com/      fullchain.pem -> ../../archive/.../fullchain1.pem (SYMLINKS to the newest)
-   |-- renewal/devops.gulfheight.com.conf   how to renew (authenticator = nginx, installer = nginx)
-   |-- options-ssl-nginx.conf           recommended TLS settings, maintained by certbot
-   '-- ssl-dhparams.pem                 Diffie-Hellman parameters
-   ```
-
-4. **Edited** `/etc/nginx/conf.d/devops.gulfheight.com.conf`: added
-   `listen 443 ssl`, the certificate lines and a redirect, each marked
-   `# managed by Certbot`, and reloaded nginx.
-
-Your site already works over HTTPS now - with certbot's generic additions.
-
-## 5. Swap in the full production config
-
-The repository's config adds HTTP/2, HSTS and security headers, keepalive
-upstreams, timeouts, gzip and per-site logs. It references exactly the files
-certbot just created.
-
-```bash
-deploy@server$ cd /opt/devops-workshop
-deploy@server$ sudo cp /etc/nginx/conf.d/devops.gulfheight.com.conf ~/devops.gulfheight.com.conf.certbot   # backup (outside conf.d!)
-deploy@server$ sudo cp deploy/nginx/conf.d/devops.gulfheight.com.conf /etc/nginx/conf.d/devops.gulfheight.com.conf
-deploy@server$ sudo nginx -t && sudo systemctl reload nginx
-```
-
-The backup goes to your home directory on purpose: every file matching
-`/etc/nginx/conf.d/*.conf` is loaded, and two files defining the same
-upstreams would make `nginx -t` fail.
-
-> **Debian 12 (nginx 1.22):** `nginx -t` reports `unknown directive "http2"`.
-> Edit `/etc/nginx/conf.d/devops.gulfheight.com.conf`: delete the
-> `http2 on;` line and change the two listen lines to
-> `listen 443 ssl http2;` and `listen [::]:443 ssl http2;` (this alternative
-> is written in a comment right there).
-
-## 6. Verify
-
-```bash
-# HTTP -> HTTPS redirect
-laptop$ curl -sI http://devops.gulfheight.com/ | head -n 3
+```text
+proxy-1  | select-site-config: certificate found for devops.gulfheight.com - using the HTTPS site config
 HTTP/1.1 301 Moved Permanently
 Location: https://devops.gulfheight.com/
+curl: (60) SSL certificate problem: unable to get local issuer certificate
+```
 
-# HTTPS, HTTP/2 and the security headers
-laptop$ curl -sI https://devops.gulfheight.com/ | grep -iE '^(HTTP|strict-transport|x-frame|x-content)'
+The whole flow works. Time for the real certificate.
+
+## 4. Get the real certificate
+
+Why: same command without `--staging`. A certificate with this name already exists (the staging
+one), so `--force-renewal` replaces it instead of stopping to ask *Keep / Renew & replace*.
+
+```console
+vm$ docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm certbot \
+      certonly --webroot -w /var/www/certbot -d devops.gulfheight.com \
+      --email <your-email> --agree-tos --no-eff-email --force-renewal
+vm$ docker compose -f docker-compose.prod.yml --env-file .env.prod restart proxy
+laptop$ curl -sI https://devops.gulfheight.com/ | grep -iE '^(HTTP|strict-transport)'
+laptop$ echo | openssl s_client -connect devops.gulfheight.com:443 -servername devops.gulfheight.com 2>/dev/null | openssl x509 -noout -issuer -dates
+```
+
+You should see `Renewing an existing certificate for devops.gulfheight.com` and `Successfully
+received certificate.`, then, with no `-k` needed because the certificate is trusted:
+
+```text
 HTTP/2 200
 strict-transport-security: max-age=31536000; includeSubDomains
-...
-
-# The API through the host nginx
-laptop$ curl -s https://devops.gulfheight.com/api/health; echo
-
-# The certificate itself: issuer, name, validity
-laptop$ openssl s_client -connect devops.gulfheight.com:443 -servername devops.gulfheight.com </dev/null 2>/dev/null \
-          | openssl x509 -noout -issuer -subject -dates
-
-# certbot's view
-deploy@server$ sudo certbot certificates
+issuer=C = US, O = Let's Encrypt, CN = YE1
+notBefore=Oct 13 13:28:41 2026 GMT
+notAfter=Jan 11 13:28:40 2027 GMT
 ```
 
-Then open <https://devops.gulfheight.com>, sign up and play a round - the
-login cookie is `Secure`, so it only works over HTTPS. For an external
-opinion, run the free test at <https://www.ssllabs.com/ssltest/>.
+`HTTP/2` is the faster protocol that comes with HTTPS. `strict-transport-security` (HSTS) tells
+browsers to use only HTTPS for this name for the next year. The issuer name (`YE1`) may differ for
+you. Open **`https://devops.gulfheight.com`**: padlock.
 
-> **HSTS is sticky.** After a browser has seen the header it refuses plain
-> HTTP for this host for a year. That is the point - but while experimenting
-> you can lower `max-age` to `300` in the config.
+## 5. Secure the login cookie
 
-## 7. Automatic renewal
+Why: now that every page is HTTPS, the login cookie may be marked *Secure*, so it can never leak
+over plain HTTP.
 
-Let's Encrypt certificates are short-lived on purpose (90 days, and the CA
-has announced even shorter lifetimes): a leaked key is only useful for a
-short time, and short lifetimes force automation. certbot renews a
-certificate when it gets close to expiry (by default 30 days before).
+Edit `.env.prod` on your laptop: `COOKIE_SECURE=true`. Then copy and apply it:
 
-```bash
-deploy@server$ systemctl list-timers certbot.timer      # runs twice a day (with a random delay)
-deploy@server$ systemctl status certbot.timer --no-pager
-deploy@server$ sudo certbot renew --dry-run             # full renewal against STAGING, nothing is saved
-deploy@server$ journalctl -u certbot.service --since -7d   # what the timer did
+```console
+laptop$ scp .env.prod <you>@<VM-IP>:/opt/devops-workshop/
+vm$ docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
 ```
 
-`--dry-run` is the most important command in this file: if it succeeds, the
-real renewal will succeed too.
+You should see `Container bugsquash-backend-1 Recreate`: only the backend reads this setting. Log in
+on the site; in the browser's DevTools (*Application -> Cookies*) `bugsquash_token` now has
+*Secure* ticked.
 
-### Reload nginx after a renewal (deploy hook)
+## 6. Renew automatically
 
-nginx reads certificates when it (re)loads its config - a renewed file on
-disk alone changes nothing. With the `nginx` installer (our case) certbot
-reloads nginx itself, but a **deploy hook** makes it explicit and also covers
-the `--webroot` and DNS-01 methods below, which never touch nginx:
+Why: certificates live 90 days, and certbot renews one about 30 days before it expires, but only if
+something runs certbot regularly.
 
-```bash
-deploy@server$ sudo tee /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh >/dev/null <<'EOF'
-#!/bin/sh
-# Runs after every SUCCESSFUL renewal (not on attempts that renewed nothing).
-# Test the config first, so a broken file never takes the site down.
-nginx -t -q && systemctl reload nginx
-EOF
-deploy@server$ sudo chmod 755 /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+First prove that a renewal would succeed (a dry run talks to staging and saves nothing):
+
+```console
+vm$ docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm certbot renew --dry-run
 ```
 
-To check that the running nginx serves the new certificate after a renewal,
-compare the `-dates` from step 6 with `sudo certbot certificates`.
+You should see `Congratulations, all simulated renewals succeeded`. A real renewal is two commands:
+`... run --rm certbot renew` (renews only when due) and `... exec proxy nginx -s reload` (nginx
+loads the new files without dropping a single connection). [`deploy/tls.sh`](tls.sh) `renew` runs
+exactly these two, plus a lock and some checks, and a systemd timer runs that twice a day:
 
-## 8. Troubleshooting
-
-Logs first: `/var/log/letsencrypt/letsencrypt.log` and
-`/var/log/nginx/devops.gulfheight.com.error.log`.
-
-**Port 80 blocked** - certbot reports *"Timeout during connect (likely firewall problem)"*.
-
-```bash
-deploy@server$ sudo ss -tlnp | grep -E ':80\b'          # nginx must listen on 0.0.0.0:80
-deploy@server$ curl -I -H 'Host: devops.gulfheight.com' http://127.0.0.1/   # works ON the VM?
-laptop$ curl -I http://203.0.113.10/                    # ...and from OUTSIDE?
-laptop$ gcloud compute firewall-rules describe allow-http-https   # allowed, sourceRanges, targetTags, disabled
-laptop$ gcloud compute instances describe devops-workshop --zone=europe-west3-a \
-          --format='value(tags.items)'                  # must include http-server
+```console
+vm$ sudo cp /opt/devops-workshop/deploy/systemd/bugsquash-tls-renew.service \
+            /opt/devops-workshop/deploy/systemd/bugsquash-tls-renew.timer /etc/systemd/system/
+vm$ sudo systemctl daemon-reload
+vm$ sudo systemctl enable --now bugsquash-tls-renew.timer
+vm$ systemctl list-timers bugsquash-tls-renew.timer
+vm$ sudo systemctl start bugsquash-tls-renew.service
+vm$ sudo journalctl -u bugsquash-tls-renew.service -n 10 -o cat
 ```
 
-If `curl` works on the VM but times out from your laptop, the packet is
-dropped by the **VPC firewall**, which filters in Google's network before it
-ever reaches the VM: the rule is missing or disabled, its source range is too
-narrow (e.g. restricted to Cloudflare's IPs, see the DNS guide), or the VM
-lacks the network tag the rule targets. Add the tags with:
+You should see the next run within 12 hours, and the test run's report:
 
-```bash
-laptop$ gcloud compute instances add-tags devops-workshop --zone=europe-west3-a \
-          --tags=http-server,https-server
+```text
+NEXT                        LEFT LAST PASSED UNIT                      ACTIVATES
+Wed 2026-10-14 00:21:45 UTC   9h -         - bugsquash-tls-renew.timer bugsquash-tls-renew.service
+
+==> Renew the certificate for devops.gulfheight.com (if due)
+  [ok] Certificate not due for renewal - nothing changed
+  [ok] Proxy reloaded
 ```
 
-**DNS not propagated / wrong** - *"DNS problem: NXDOMAIN looking up A for
-devops.gulfheight.com"* or the CA connects to a wrong IP.
+> **Concept: systemd timer.** A timer is the VM's alarm clock: at 00:00 and 12:00 (plus a random
+> delay of up to an hour) it starts the service, which runs `tls.sh renew` once and exits. If the VM
+> was off at that moment, it catches up right after the next boot.
 
-```bash
-laptop$ dig +short devops.gulfheight.com A    @1.1.1.1
-laptop$ dig +short devops.gulfheight.com AAAA @1.1.1.1   # an AAAA record is PREFERRED by Let's Encrypt
-```
+## Checkpoint
 
-A stale or wrong **AAAA** record is a classic: IPv4 works in your browser,
-but the CA validates over IPv6 and fails. Fix or delete the AAAA record.
+- `https://devops.gulfheight.com` has a trusted Let's Encrypt certificate, HTTP/2 and HSTS.
+- `http://devops.gulfheight.com` and `http://<VM-IP>` redirect to HTTPS.
+- The login cookie is *Secure*, and a timer renews the certificate twice a day.
 
-**Cloudflare proxy interfering** - with the orange cloud the CA talks to
-Cloudflare, not to you. Edge redirects ("Always Use HTTPS"), caching or the
-WAF can break the challenge. Switch the record to **DNS only** while issuing,
-or use DNS-01 (below), which does not involve HTTP at all.
+Next: every change still means copying files and typing commands by hand.
+[Stage 4](stage-4-automated-deploys.md) lets GitHub Actions deploy for you.
 
-**404 / "unauthorized" for the challenge** - the request reached *a* web
-server, but not the right `server` block: check `server_name`, that the
-bootstrap file really is in `/etc/nginx/conf.d/`, and that no other site
-answers for the name: `sudo nginx -T | grep -n server_name`.
+<details>
+<summary>Going deeper: the tls.sh shortcut, cron and rate limits</summary>
 
-**`nginx -t`: cannot load certificate ... No such file** - the production
-config was installed before a certificate existed. Go back to step 3.
+- **Shortcut.** `./deploy/tls.sh issue --staging` and then `./deploy/tls.sh issue` do steps 2 to 4 in
+  one command each: check that DNS points at this VM, run certbot, restart the proxy and test the
+  result. `./deploy/tls.sh status` lists the certificates. It takes the e-mail address from
+  `LETSENCRYPT_EMAIL` in `.env.prod` (empty = no address).
+- **Cron instead of the timer.** One line in root's crontab (`sudo crontab -e`) does the same job:
+  `17 3,15 * * * /bin/bash /opt/devops-workshop/deploy/tls.sh renew >/dev/null 2>&1`.
+  The timer wins on visibility: `systemctl list-timers` and `journalctl` show what happened.
+- **Why the timer runs as root.** It must read `.env.prod` (mode `0600`) whoever owns the folder:
+  you now, the `deploy` user from Stage 4. Membership in the `docker` group is root-equivalent
+  anyway, so root adds no real power here.
+- **Rate limits.** At most 5 certificates for the same name per week and 5 failed validations per
+  name per hour (<https://letsencrypt.org/docs/rate-limits/>). `--staging` and `--dry-run` do not count.
+- **HSTS is sticky.** A browser that has seen the header refuses plain `http://devops.gulfheight.com`
+  for a year, even on a rebuilt VM that is back at Stage 2. Use a private window, or clear the name
+  at `chrome://net-internals/#hsts`.
 
-**Rate limits** - for example 5 certificates per identical set of names per
-week, and 5 failed validations per name per hour (details:
-<https://letsencrypt.org/docs/rate-limits/>). Debug with `--staging`, and
-use `certbot renew --dry-run` for renewals - neither counts against the
-production limits.
+</details>
 
-## 9. Alternatives to `certbot --nginx`
+<details>
+<summary>Going deeper: Cloudflare's orange cloud (optional)</summary>
 
-### 9.1 `certonly --webroot` (certbot never edits nginx configs)
+With the orange cloud (*Proxied*), browsers connect to Cloudflare, which hides your IP, filters
+attacks and caches files, then opens a **second** HTTPS connection to your proxy. Rules:
 
-Our configs serve `/.well-known/acme-challenge/` from `/var/www/certbot`, so
-certbot can simply drop the token file there while nginx keeps running:
+- **SSL/TLS -> Overview -> Full (strict)**: Cloudflare checks your Let's Encrypt certificate on that
+  second connection. **Never "Flexible"**: Cloudflare would talk plain HTTP to port 80, the proxy
+  answers "go to HTTPS", Cloudflare asks over HTTP again... `ERR_TOO_MANY_REDIRECTS`.
+- Uncomment [`deploy/nginx/snippets/cloudflare-real-ip.conf`](nginx/snippets/cloudflare-real-ip.conf),
+  copy `deploy/nginx` again and run `vm$ docker compose -f docker-compose.prod.yml --env-file .env.prod
+  exec proxy nginx -s reload`, so logs and the login rate limit see real visitor IPs instead of Cloudflare's.
+- Renewals keep working (the challenge folder is served on port 443 too). `tls.sh` needs `FORCE=1`
+  for a new certificate, because `dig` now returns Cloudflare's addresses.
+- SSH, `scp` and the CI deploy must use the IP address: Cloudflare only proxies web traffic.
 
-```bash
-deploy@server$ sudo certbot certonly --webroot -w /var/www/certbot -d devops.gulfheight.com
-```
+</details>
 
-`certonly` only obtains the certificate - nginx is not modified, and the
-deploy hook from step 7 reloads it after renewals. One catch: the nginx
-plugin is what creates `options-ssl-nginx.conf` and `ssl-dhparams.pem`. If
-you never ran `certbot --nginx`, create them before installing the
-production config:
+## Troubleshooting
 
-```bash
-deploy@server$ sudo openssl dhparam -out /etc/letsencrypt/ssl-dhparams.pem 2048
-deploy@server$ sudo tee /etc/letsencrypt/options-ssl-nginx.conf >/dev/null <<'EOF'
-# Same settings certbot's nginx plugin installs.
-ssl_session_cache shared:le_nginx_SSL:10m;
-ssl_session_timeout 1440m;
-ssl_session_tickets off;
-ssl_protocols TLSv1.2 TLSv1.3;
-ssl_prefer_server_ciphers off;
-ssl_ciphers "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384";
-EOF
-```
-
-### 9.2 DNS-01 with `certbot-dns-cloudflare`
-
-Instead of serving a file over HTTP, certbot proves control by creating a TXT
-record `_acme-challenge.devops.gulfheight.com` through Cloudflare's API.
-Advantages: port 80 does not need to be reachable, it works with the orange
-cloud, and it is the only way to get **wildcard** certificates
-(`*.gulfheight.com`).
-
-1. **Create a scoped API token** - never use the Global API Key, which can
-   do *everything* in your Cloudflare account. Cloudflare dashboard ->
-   **My Profile** -> **API Tokens** -> **Create Token** -> template
-   **Edit zone DNS**:
-   * Permissions: `Zone` - `DNS` - `Edit`
-   * Zone Resources: `Include` - `Specific zone` - `gulfheight.com`
-   * Optional: *Client IP Address Filtering* = your server's IP
-
-   If the token leaks, the attacker can change DNS records of this one zone -
-   and nothing else.
-
-2. **Store it** readable by root only (certbot warns about looser permissions):
-
-   ```bash
-   deploy@server$ sudo apt install -y python3-certbot-dns-cloudflare
-   deploy@server$ sudo install -d -m 700 /root/.secrets
-   deploy@server$ sudo tee /root/.secrets/cloudflare.ini >/dev/null <<'EOF'
-   dns_cloudflare_api_token = PASTE_THE_TOKEN_HERE
-   EOF
-   deploy@server$ sudo chmod 600 /root/.secrets/cloudflare.ini
-   ```
-
-3. **Request the certificate:**
-
-   ```bash
-   deploy@server$ sudo certbot certonly \
-       --dns-cloudflare \
-       --dns-cloudflare-credentials /root/.secrets/cloudflare.ini \
-       --dns-cloudflare-propagation-seconds 30 \
-       -d devops.gulfheight.com
-   ```
-
-The certificate lands in the same `/etc/letsencrypt/live/devops.gulfheight.com/`
-path, so the production nginx config works unchanged (create
-`options-ssl-nginx.conf` / `ssl-dhparams.pem` as in 9.1 if they do not exist).
-Renewals reuse the stored settings; the deploy hook reloads nginx.
+| Symptom | Fix |
+|---------|-----|
+| certbot: `Timeout during connect (likely firewall problem)` | Let's Encrypt cannot reach port 80. Check the VM's *Allow HTTP traffic* box ([Stage 1](stage-1-ip-http.md#1-create-the-vm)) and that `laptop$ curl -I http://devops.gulfheight.com/.well-known/acme-challenge/x` returns a `404` from nginx. |
+| certbot: `DNS problem: NXDOMAIN` or a wrong IP | The name does not point here yet: [Stage 2, step 2](stage-2-domain-http.md#2-check-the-record-from-your-laptop). |
+| certbot asks *1: Keep the existing certificate / 2: Renew & replace* | A certificate with this name exists (the staging one). Add `--force-renewal`, or answer `2`. |
+| Still plain HTTP after *Successfully received certificate* | The proxy was not restarted: `restart proxy`, then check the `select-site-config` log line. |
+| `ERR_TOO_MANY_REDIRECTS` | Cloudflare's orange cloud with SSL mode *Flexible*. Set **Full (strict)**. |

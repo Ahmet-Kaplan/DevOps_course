@@ -1,0 +1,20 @@
+---
+# =============================================================================
+# roles/backup/defaults/main.yml - knobs of the "backup" role
+# -----------------------------------------------------------------------------
+# WHERE the backups go on your laptop is a shared setting (backup_local_dir in
+# group_vars/all.yml), because roles/app reads them back on a new server.
+# =============================================================================
+
+# Root-only scratch folder on the server; deleted at the end of every run.
+backup_remote_tmp_dir: /var/tmp/bugsquash-backup
+
+# Also back up the letsencrypt volume (account key, certificates, renewal
+# config) - only if it holds a certificate for the domain.
+backup_certificates: true
+
+# The vault password file that encrypts the backups. ./provision.sh exports
+# ANSIBLE_VAULT_PASSWORD_FILE; without it, fall back to ansible/.vault_pass.
+backup_vault_password_file: >-
+  {{ lookup('ansible.builtin.env', 'ANSIBLE_VAULT_PASSWORD_FILE', default='')
+     | default(playbook_dir ~ '/.vault_pass', true) }}

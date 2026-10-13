@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  author: Bug Squash Arena workshop
+  description: Docker Engine and the Compose plugin from Docker's official apt repository
+  license: MIT
+  min_ansible_version: "2.15"   # first version with ansible.builtin.deb822_repository
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+dependencies: []

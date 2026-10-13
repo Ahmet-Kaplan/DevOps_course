@@ -1,0 +1,22 @@
+---
+# =============================================================================
+# roles/github_ci/defaults/main.yml - knobs of the "github_ci" role
+# -----------------------------------------------------------------------------
+# The role runs only with github_ci_sync: true (group_vars/all.yml) and a
+# logged-in GitHub CLI on your laptop (`gh auth login`, once).
+# =============================================================================
+
+# DEPLOY_HOST: the address the CI job connects to - the VM's static external
+# IP (SSH does not go through Cloudflare's proxy, so never the domain if it
+# is proxied).
+github_ci_host: "{{ ansible_host | default(inventory_hostname) }}"
+
+# The workflow's ssh/rsync use the default port 22.
+github_ci_port: "{{ ansible_port | default(22) }}"
+
+# GitHub never shows a secret again, so Ansible cannot compare. Instead it
+# remembers a fingerprint (SHA-256) of what it set last time in this file,
+# and only talks to GitHub when something changed - e.g. the NEW host key of
+# a recreated VM. Git-ignored. -e github_ci_force=true sets everything again.
+github_ci_state_file: "{{ playbook_dir }}/.github_ci_sync"
+github_ci_force: false

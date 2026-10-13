@@ -1,0 +1,52 @@
+---
+# =============================================================================
+# roles/app/defaults/main.yml - knobs of the "app" role
+# -----------------------------------------------------------------------------
+# The shared settings (domain, app_dir, deploy_user, image_tag, compose_cmd,
+# backup_local_dir, ...) live in group_vars/all.yml. These are the app role's
+# own knobs. Override any of them for one run:  ./ansible/provision.sh -e name=value
+# =============================================================================
+
+# Where the deploy bundle comes from: the root of THIS repository checkout on
+# your laptop (the parent of ansible/). The role copies
+#   <app_bundle_src>/docker-compose.prod.yml  ->  <app_dir>/docker-compose.prod.yml
+#   <app_bundle_src>/deploy/                  ->  <app_dir>/deploy/
+# exactly like `scp` in stages 1-3 and the CI job's rsync in stage 4.
+app_bundle_src: "{{ playbook_dir | dirname }}"
+
+# The services docker-compose.prod.yml starts. If one of them is not running,
+# the role runs deploy.sh even when no file changed (self-healing).
+app_services: [backend, db, frontend, proxy]
+
+# Values for .env.prod that are neither secret nor shared (same defaults as
+# .env.prod.example).
+app_jwt_expires_in: 7d
+app_auth_rate_limit_max: 30
+
+# true = run deploy.sh even if nothing changed, e.g. to pull a newer "latest":
+#   ./ansible/provision.sh app.yml -e app_force_deploy=true
+app_force_deploy: false
+
+# On a server WITHOUT data, restore the newest backups made by backup.yml:
+#   <backup_local_dir>/letsencrypt-latest.tar.gz.vault  before the stack starts
+#   <backup_local_dir>/db-latest.dump.vault             when the users table is empty
+# A server that already has data is never overwritten.
+app_restore_backups: true
+
+# Seconds to wait for healthy containers after a database restore.
+app_wait_timeout: 180
+
+# Scratch folder on the server for a restore (decrypted files live here for
+# a few seconds, root-only, and are deleted right after).
+app_tmp_dir: /var/tmp/bugsquash-restore
+
+# Options in front of the CI public key in ~deploy/.ssh/authorized_keys.
+# "restrict" = no port/agent/X11 forwarding and no terminal: the key can run
+# commands (rsync, deploy.sh) and nothing more.
+app_ci_key_options: restrict
+
+# The certificate renewal timer from deploy/systemd/ (stage 3). Installed in
+# every stage: with no certificate the job just says "nothing to do".
+app_renewal_units:
+  - bugsquash-tls-renew.service
+  - bugsquash-tls-renew.timer

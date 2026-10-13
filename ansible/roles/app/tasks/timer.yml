@@ -1,0 +1,33 @@
+---
+# =============================================================================
+# timer.yml - the certificate renewal timer (stage 3, deploy/systemd/)
+# -----------------------------------------------------------------------------
+# By hand in stage 3:  sudo cp deploy/systemd/bugsquash-tls-renew.* /etc/systemd/system/
+#                      sudo systemctl daemon-reload
+#                      sudo systemctl enable --now bugsquash-tls-renew.timer
+# The unit files hard-code /opt/devops-workshop; if app_dir is different, the
+# path is replaced while copying. Installed in every stage: without a domain
+# or certificate the job just reports "nothing to do".
+# =============================================================================
+
+- name: Install the renewal units into /etc/systemd/system
+  ansible.builtin.copy:
+    # From this checkout (rstrip=false keeps the final newline).
+    content: >-
+      {{ lookup('ansible.builtin.file', app_bundle_src ~ '/deploy/systemd/' ~ item, rstrip=false)
+         | replace('/opt/devops-workshop', app_dir) }}
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ app_renewal_units }}"
+  notify: Reload systemd
+
+- name: Let systemd read the new unit files now
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable the timer (starts now and on every boot)
+  ansible.builtin.systemd_service:
+    name: bugsquash-tls-renew.timer
+    enabled: true
+    state: started

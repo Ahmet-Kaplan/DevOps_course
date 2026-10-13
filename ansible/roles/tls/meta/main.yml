@@ -1,0 +1,13 @@
+---
+galaxy_info:
+  author: Bug Squash Arena workshop
+  description: Let's Encrypt certificate via deploy/tls.sh (issue or renew), COOKIE_SECURE follow-up
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+# Runs after roles/app (the bundle, .env.prod and a running proxy must exist).
+dependencies: []

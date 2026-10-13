@@ -1,0 +1,33 @@
+---
+# =============================================================================
+# cert_check.yml - is there a certificate for {{ domain }} in the volume?
+# -----------------------------------------------------------------------------
+# Sets app_cert_present (true/false). Looks at the volume's folder on the host
+# directly (Ansible runs as root here), so it works even before the stack has
+# ever started. Same test as deploy/nginx/select-site-config.sh in the proxy.
+# =============================================================================
+
+- name: Ask Docker where the letsencrypt volume keeps its files
+  ansible.builtin.command:
+    # {% raw %} keeps Ansible's Jinja away from Docker's own {{ }} template.
+    argv: [docker, volume, inspect, --format, "{% raw %}{{ .Mountpoint }}{% endraw %}", "{{ compose_project }}_letsencrypt"]
+  register: app_le_volume
+  changed_when: false
+  # rc 1 = "no such volume" (a new server) - an answer, not an error.
+  failed_when: app_le_volume.rc not in [0, 1]
+
+- name: Look for the certificate files of {{ domain }}
+  ansible.builtin.stat:
+    path: "{{ app_le_volume.stdout }}/live/{{ domain }}/{{ item }}"
+    # live/ holds symlinks into archive/: check the real file behind each one.
+    follow: true
+    get_checksum: false
+  loop: [fullchain.pem, privkey.pem]
+  register: app_cert_files
+  when: app_le_volume.rc == 0 and domain | length > 0
+
+- name: Remember the answer
+  ansible.builtin.set_fact:
+    app_cert_present: >-
+      {{ app_le_volume.rc == 0 and domain | length > 0 and
+         (app_cert_files.results | map(attribute='stat.size', default=0) | select('gt', 0) | list | length) == 2 }}

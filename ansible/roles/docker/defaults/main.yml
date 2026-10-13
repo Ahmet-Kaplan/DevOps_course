@@ -1,0 +1,69 @@
+---
+# =============================================================================
+# roles/docker/defaults/main.yml - knobs of the "docker" role
+# -----------------------------------------------------------------------------
+# Installs Docker Engine from Docker's OWN apt repository (download.docker.com),
+# exactly like the manual steps in deploy/stage-1-ip-http.md, step 4 (Install Docker).
+# =============================================================================
+
+# Packages this role needs before it can add the repository
+# (python3-debian powers the deb822_repository module). The common role
+# installs them too; listing them here keeps the role usable on its own.
+docker_prerequisites:
+  - ca-certificates
+  - python3-debian
+
+# Debian's own Docker packaging. It conflicts with docker-ce (both ship
+# dockerd, containerd and runc) and must be removed first. None of them is
+# installed on a fresh Compute Engine image - then this is a no-op.
+docker_conflicting_packages:
+  - docker.io
+  - docker-doc
+  - docker-compose
+  - podman-docker
+  - containerd
+  - runc
+
+# What we install from download.docker.com:
+docker_packages:
+  - docker-ce              # the daemon: dockerd
+  - docker-ce-cli          # the `docker` command
+  - containerd.io          # the runtime underneath (pulls images, runs runc)
+  - docker-buildx-plugin   # `docker build` / `docker buildx`
+  - docker-compose-plugin  # `docker compose` (v2, a CLI plugin - no hyphen)
+
+# Repository location. ansible_facts['distribution'] is "Debian" here (Ubuntu
+# works too: Docker publishes .../linux/ubuntu with the same layout).
+docker_apt_repo_url: "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}"
+docker_apt_key_url: "{{ docker_apt_repo_url }}/gpg"
+docker_apt_key_path: /etc/apt/keyrings/docker.asc
+
+# The kernel reports the CPU as x86_64/aarch64; Debian calls the same
+# architectures amd64/arm64 (`dpkg --print-architecture`).
+docker_apt_arch_map:
+  x86_64: amd64
+  aarch64: arm64
+
+# Written to /etc/docker/daemon.json (as JSON). Defaults for EVERY container
+# on this host, including throwaway ones that set no options of their own:
+docker_daemon_config:
+  # Rotate container logs (/var/lib/docker/containers/<id>/<id>-json.log).
+  # Without this, a chatty container fills the 10 GB disk sooner or later.
+  log-driver: json-file
+  log-opts:
+    max-size: "10m"
+    max-file: "3"
+  # Containers keep running while dockerd itself restarts (package upgrade,
+  # config change). They are children of containerd-shim, not of dockerd.
+  live-restore: true
+
+# Accounts that may use `docker` without sudo. Membership in the docker group
+# is ROOT-EQUIVALENT (`docker run -v /:/host ...` can edit any file), so keep
+# this list short. Default: the admin account Ansible logs in with.
+# (The deploy account is added by the deploy_user role.)
+docker_users: "{{ [ansible_user] if ansible_user is defined else [] }}"
+
+# Run `docker run --rm hello-world` at the end as an end-to-end test
+# (daemon -> registry pull -> containerd -> runc -> container output).
+docker_smoke_test: true
+docker_smoke_test_image: hello-world

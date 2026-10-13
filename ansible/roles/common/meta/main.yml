@@ -1,0 +1,14 @@
+---
+# Role metadata: who wrote it, which platforms it was tested on. Ansible uses
+# "dependencies" (other roles to run first); the rest documents the role.
+galaxy_info:
+  author: Bug Squash Arena workshop
+  description: Base packages and automatic security updates for a Debian server
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+dependencies: []

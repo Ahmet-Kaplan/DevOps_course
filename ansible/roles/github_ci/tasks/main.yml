@@ -1,0 +1,100 @@
+---
+# =============================================================================
+# roles/github_ci/tasks/main.yml - the CI deploy settings, set from your laptop
+# -----------------------------------------------------------------------------
+# Stage 4 by hand: GitHub -> Settings -> Secrets and variables -> Actions,
+# then four secrets and one variable. Here, with the GitHub CLI:
+#   gh secret set DEPLOY_HOST          the server's IP
+#   gh secret set DEPLOY_USER          deploy
+#   gh secret set DEPLOY_SSH_KEY       the CI private key from the vault
+#   gh secret set DEPLOY_KNOWN_HOSTS   the server's SSH host key, read from the
+#                                      server itself (no trust-on-first-use)
+#   gh variable set ENABLE_AUTO_DEPLOY true
+# Why it matters for a rebuild: a NEW VM has a NEW host key. Without updating
+# DEPLOY_KNOWN_HOSTS every CI deploy fails with "Host key verification failed".
+# =============================================================================
+
+- name: Check that the GitHub CLI is installed and logged in
+  ansible.builtin.command:
+    argv: [gh, auth, status, --hostname, github.com]
+  delegate_to: localhost
+  become: false
+  register: github_ci_gh
+  changed_when: false
+  failed_when: false
+
+- name: Skip the GitHub sync (gh missing or not logged in)
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: github_ci_sync is true, but the GitHub CLI is not available or not
+      logged in on this laptop - the CI deploy settings were NOT updated.
+      Fix: install gh and run `gh auth login`, then run app.yml again.
+  when: github_ci_gh.rc | default(1) != 0
+
+- name: Sync the CI deploy settings to {{ github_repo }}
+  when: github_ci_gh.rc | default(1) == 0
+  block:
+    - name: Read the server's SSH host key (ed25519)
+      # The PUBLIC key that identifies this server; the CI job compares it
+      # with what the server presents before sending anything.
+      ansible.builtin.slurp:
+        src: /etc/ssh/ssh_host_ed25519_key.pub
+      register: github_ci_host_key
+
+    - name: Build the values
+      ansible.builtin.set_fact:
+        # known_hosts format: "<host> <key type> <key>"; ssh writes a host on a
+        # port other than 22 as "[host]:port".
+        github_ci_secrets:
+          DEPLOY_HOST: "{{ github_ci_host }}"
+          DEPLOY_USER: "{{ deploy_user }}"
+          DEPLOY_SSH_KEY: "{{ vault_ci_deploy_private_key }}"
+          DEPLOY_KNOWN_HOSTS: >-
+            {{ (github_ci_host if github_ci_port | int == 22 else '[' ~ github_ci_host ~ ']:' ~ github_ci_port) ~ ' '
+               ~ ((github_ci_host_key.content | b64decode).split()[0:2] | join(' ')) }}
+      no_log: true
+
+    - name: Fingerprint them (to notice changes without reading secrets back)
+      ansible.builtin.set_fact:
+        github_ci_fingerprint: "{{ (github_repo ~ (github_ci_secrets | to_json(sort_keys=true)) ~ 'ENABLE_AUTO_DEPLOY=true') | hash('sha256') }}"
+
+    - name: Read the fingerprint of the last sync
+      ansible.builtin.slurp:
+        src: "{{ github_ci_state_file }}"
+      delegate_to: localhost
+      become: false
+      register: github_ci_last
+      failed_when: false
+
+    - name: Set the secrets and the variable
+      when: >-
+        github_ci_force | bool or github_ci_last.content is not defined
+        or (github_ci_last.content | b64decode | trim) != github_ci_fingerprint
+      block:
+        - name: Set the repository secrets (values go in through stdin)
+          ansible.builtin.command:
+            argv: [gh, secret, set, "{{ item.key }}", --repo, "{{ github_repo }}"]
+            stdin: "{{ item.value }}"
+            stdin_add_newline: false
+          loop: "{{ github_ci_secrets | dict2items }}"
+          loop_control:
+            label: "{{ item.key }}"
+          delegate_to: localhost
+          become: false
+          no_log: true
+          changed_when: true
+
+        - name: Turn the deploy job on (variable ENABLE_AUTO_DEPLOY=true)
+          ansible.builtin.command:
+            argv: [gh, variable, set, ENABLE_AUTO_DEPLOY, --body, "true", --repo, "{{ github_repo }}"]
+          delegate_to: localhost
+          become: false
+          changed_when: true
+
+        - name: Remember this sync
+          ansible.builtin.copy:
+            content: "{{ github_ci_fingerprint }}\n"
+            dest: "{{ github_ci_state_file }}"
+            mode: "0600"
+          delegate_to: localhost
+          become: false

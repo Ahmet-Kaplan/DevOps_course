@@ -1,0 +1,45 @@
+---
+# =============================================================================
+# roles/common/defaults/main.yml - knobs of the "common" role
+# -----------------------------------------------------------------------------
+# defaults/ has the LOWEST precedence of all variables: group_vars, the
+# playbook or `-e name=value` override any of them. Every name starts with the
+# role name ("common_") so you can always tell where a variable belongs - and
+# two roles can never overwrite each other's settings by accident.
+# =============================================================================
+
+# Skip `apt update` if the package index was refreshed less than this many
+# seconds ago (3600 = 1 hour). Re-running the playbook stays fast.
+common_apt_cache_valid_time: 3600
+
+# true = also run `apt upgrade` (the "safe" variant: never removes packages).
+# Off by default: an upgrade is a CHANGE you want to schedule, not a side
+# effect of re-running the playbook. Security updates are installed daily by
+# unattended-upgrades anyway (see below). One-off: -e common_apt_upgrade=true
+common_apt_upgrade: false
+
+# Base packages. Each one is here for a reason:
+common_packages:
+  - acl              # lets Ansible "become" an UNPRIVILEGED user (deploy) safely
+  - rsync            # the CI deploy job syncs the deploy bundle with rsync over SSH
+  - curl             # deploy.sh / tls.sh smoke tests, downloading keys
+  - ca-certificates  # trust store for HTTPS (Docker's apt repository, Docker Hub)
+  - gnupg            # OpenPGP tooling for repository signing keys
+  - bind9-dnsutils   # `dig`: check what public DNS says about our domain
+  - python3-debian   # needed by Ansible's deb822_repository module (docker role)
+  - unattended-upgrades  # automatic security updates
+  - apt-listchanges  # mails/logs what changed in upgraded packages
+
+# Automatic security updates. Debian's two switches live in
+# /etc/apt/apt.conf.d/20auto-upgrades: refresh the package lists daily and
+# install security updates daily. Google's Debian images ship with both on;
+# the role makes that a guarantee instead of an assumption.
+common_unattended_upgrades: true
+
+# Kernel and libc updates only take effect after a reboot, which
+# unattended-upgrades never does on its own. true = reboot at
+# common_unattended_reboot_time IF an update requires it. Safe for our stack
+# (Docker starts on boot, containers have restart: unless-stopped), but off by
+# default so a reboot is never a surprise.
+common_unattended_reboot: false
+common_unattended_reboot_time: "04:00"

@@ -1,0 +1,77 @@
+---
+# =============================================================================
+# roles/deploy_user/tasks/main.yml - the unprivileged "deploy" account
+# -----------------------------------------------------------------------------
+# Two kinds of accounts on the server, on purpose:
+#   your admin user  created by gcloud / the guest agent, passwordless sudo,
+#                    used by Ansible to administer the machine
+#   deploy           created HERE: owns the app directory, runs deploy.sh,
+#                    target of the CI deploy job - and has NO sudo
+# The application must not depend on one person's Google account, and the CI
+# key must not be able to become root.
+# =============================================================================
+
+- name: Create the unprivileged deploy account {{ deploy_user }}
+  ansible.builtin.user:
+    name: "{{ deploy_user }}"
+    comment: Bug Squash Arena deploy account (no sudo)
+    shell: "{{ deploy_user_shell }}"
+    create_home: true
+    groups: "{{ deploy_user_groups }}"
+    # Add these groups, never remove the account from others.
+    append: true
+    # No password is set: the account is locked for password logins and can
+    # only be reached with an SSH key or `sudo -iu deploy` from an admin.
+    state: present
+  register: deploy_user_account
+
+- name: List the sudo rights of {{ deploy_user }}
+  # Read-only. `sudo -l -U <user>` lists what that user may run via sudo -
+  # it covers sudoers files AND group memberships in one go.
+  ansible.builtin.command:
+    argv: [sudo, --non-interactive, --list, --other-user, "{{ deploy_user }}"]
+  environment:
+    LC_ALL: C   # fixed English output, whatever the server's locale is
+  register: deploy_user_sudo_rights
+  changed_when: false
+  # Skipped in --check mode: on a fresh server the account would not exist yet.
+  when: not ansible_check_mode
+
+- name: Fail if sudo rights were found for {{ deploy_user }}
+  ansible.builtin.assert:
+    that:
+      - "'is not allowed to run sudo' in deploy_user_sudo_rights.stdout"
+    # A leaked CI key must never be a root key - so this is a hard failure.
+    fail_msg: >-
+      The account '{{ deploy_user }}' may use sudo - it must not (CI logs in
+      as this account). Remove it from the groups sudo / google-sudoers and
+      from /etc/sudoers.d. Did someone run `gcloud compute ssh {{ deploy_user }}@...`?
+      That makes Google's guest agent add it to google-sudoers.
+      sudo said: {{ deploy_user_sudo_rights.stdout }}
+    success_msg: "{{ deploy_user }} has no sudo rights - as intended."
+  when: not ansible_check_mode
+
+- name: Authorize extra SSH keys for {{ deploy_user }}
+  when: deploy_user_authorized_keys | length > 0
+  block:
+    - name: Create ~/.ssh with safe permissions
+      # sshd ignores authorized_keys if the directory or file is writable by
+      # anyone else (StrictModes) - hence 0700 / 0600.
+      ansible.builtin.file:
+        path: "{{ deploy_user_account.home | default('/home/' + deploy_user) }}/.ssh"
+        state: directory
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: "0700"
+
+    - name: Add the keys to ~/.ssh/authorized_keys
+      # lineinfile ADDS missing lines and keeps all others (e.g. the CI key the
+      # app role installs), so both roles can manage the same file.
+      ansible.builtin.lineinfile:
+        path: "{{ deploy_user_account.home | default('/home/' + deploy_user) }}/.ssh/authorized_keys"
+        line: "{{ item }}"
+        create: true
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: "0600"
+      loop: "{{ deploy_user_authorized_keys }}"

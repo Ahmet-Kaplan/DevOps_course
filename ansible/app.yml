@@ -1,0 +1,152 @@
+---
+# =============================================================================
+# ansible/app.yml - deploy Bug Squash Arena on a Docker host
+# -----------------------------------------------------------------------------
+#   ./ansible/provision.sh app.yml                     # hosts from inventory.ini
+#   ./ansible/provision.sh app.yml -e image_tag=sha-1a2b3c4
+#   ./ansible/provision.sh app.yml -e app_force_deploy=true   # re-pull "latest"
+#
+# Needs: a Docker host (docker.yml - site.yml runs both) and the encrypted
+# secrets (./ansible/bootstrap-secrets.sh, once).
+#
+# Stages 2-4 of the workshop, in one play:
+#   cloudflare_dns  (optional) the A record <domain> -> this server   stage 2
+#   app             bundle, .env.prod, restores, deploy.sh, timer     stages 1, 3, 4
+#   tls             Let's Encrypt certificate via deploy/tls.sh       stage 3
+#   github_ci       (optional) the CI deploy secrets in GitHub        stage 4
+# =============================================================================
+
+- name: Deploy Bug Squash Arena
+  hosts: all
+  become: true
+  gather_facts: false
+
+  # Every pre_task is tagged "always": it also runs with --tags tls, --tags app, ...
+  pre_tasks:
+    - name: Wait until the server accepts SSH logins
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+      tags: [always]
+
+    # The secrets are loaded HERE, as a task, not with `vars_files:`. A task
+    # only runs when the play runs - so `--syntax-check`, ansible-lint and CI
+    # never need the vault password, and a missing vault gets a clear message.
+    - name: Look for the encrypted secrets on this laptop
+      ansible.builtin.stat:
+        path: "{{ secrets_file }}"
+      delegate_to: localhost
+      become: false
+      register: secrets_file_stat
+      tags: [always]
+
+    - name: Fail early if there are no secrets yet
+      ansible.builtin.assert:
+        that: secrets_file_stat.stat.exists
+        fail_msg: >-
+          {{ secrets_file }} does not exist. Create it once with
+          ./ansible/bootstrap-secrets.sh  (server already set up by hand? add
+          --from-env <path to its .env.prod>, see ansible/README.md).
+        quiet: true
+      tags: [always]
+
+    - name: Load the secrets (ansible-vault decrypts them in memory)
+      ansible.builtin.include_vars:
+        file: "{{ secrets_file }}"
+      # Never print them, not even with -v.
+      no_log: true
+      tags: [always]
+
+    - name: Check that every required secret is set
+      ansible.builtin.assert:
+        that:
+          - vault_postgres_password | default('') | length > 0
+          - vault_jwt_secret | default('') | length > 0
+          - vault_ci_deploy_private_key | default('') | length > 0
+          - vault_ci_deploy_public_key | default('') | length > 0
+        fail_msg: A required vault_* value is missing in {{ secrets_file }} (compare it with secrets/vault.example.yml).
+        quiet: true
+      tags: [always]
+
+    - name: Check that Docker and Compose are installed
+      ansible.builtin.command:
+        argv: [docker, compose, version]
+      register: docker_compose_version
+      changed_when: false
+      failed_when: false
+      tags: [always]
+
+    - name: Fail early on a server without Docker
+      ansible.builtin.assert:
+        that: docker_compose_version.rc == 0
+        fail_msg: Docker is not installed. Run site.yml (or docker.yml first) - ./ansible/provision.sh
+        quiet: true
+      tags: [always]
+
+    # Safety net for the FIRST run against a server built by hand (stages 1-4).
+    # PostgreSQL stores POSTGRES_PASSWORD inside the database volume when the
+    # volume is created, and ignores the variable afterwards. A vault made
+    # WITHOUT --from-env would write a new password into .env.prod and lock the
+    # backend out of its own database - so compare BEFORE anything is changed.
+    - name: Read the .env.prod that is on the server now (if any)
+      ansible.builtin.slurp:
+        src: "{{ app_dir }}/.env.prod"
+      register: env_prod_on_server
+      failed_when: false   # a new server has none yet
+      no_log: true         # it holds the secrets
+      tags: [always]
+
+    - name: Check whether the database volume exists
+      ansible.builtin.command:
+        argv: [docker, volume, inspect, "{{ compose_project }}_pgdata"]
+      register: pgdata_volume
+      changed_when: false
+      # rc 1 = "no such volume" (a new server) - an answer, not an error.
+      failed_when: pgdata_volume.rc not in [0, 1]
+      check_mode: false
+      tags: [always]
+
+    - name: Fail early if the vault would lock the backend out of its database
+      ansible.builtin.assert:
+        # Passes on a new server (no .env.prod or no volume yet), and when the
+        # server's POSTGRES_PASSWORD line holds the vault's password.
+        that: >-
+          not (db_password_guard | default(true) | bool)
+          or env_prod_on_server.content is not defined
+          or pgdata_volume.rc != 0
+          or vault_postgres_password in (env_prod_on_server.content | b64decode
+                                         | regex_findall('(?m)^POSTGRES_PASSWORD=.*') | last | default(''))
+        fail_msg: >-
+          STOP - nothing was changed. {{ app_dir }}/.env.prod on the server has a
+          different POSTGRES_PASSWORD than {{ secrets_file }}, and the database
+          volume already exists. PostgreSQL keeps the password it was created
+          with, so the backend would be locked out of its database. Adopt the
+          server's secrets instead (from the repository root):
+          ./ansible/bootstrap-secrets.sh --force --from-env .env.prod
+          (changed the password INSIDE PostgreSQL on purpose with ALTER USER?
+          then run once with -e db_password_guard=false)
+        quiet: true
+      tags: [always]
+
+  roles:
+    - role: cloudflare_dns
+      when: vault_cloudflare_api_token | default('') | length > 0 and domain | length > 0
+      tags: [dns]
+    - role: app
+      tags: [app]
+    - role: tls
+      when: domain | length > 0
+      tags: [tls]
+    - role: github_ci
+      when: github_ci_sync | bool
+      tags: [github_ci]
+
+  post_tasks:
+    - name: Final check through the proxy
+      ansible.builtin.include_role:
+        name: app
+        tasks_from: health.yml
+        # Tags on an include_* apply to the include itself only. `apply` tags
+        # the included tasks too, so the check also runs with --tags tls etc.
+        apply:
+          tags: [always]
+      tags: [always]

@@ -1,0 +1,35 @@
+---
+# =============================================================================
+# health.yml - the final check: does the site answer like it does for a visitor?
+# -----------------------------------------------------------------------------
+# Called by app.yml at the very end (after roles/tls), so it sees the final
+# mode. The request goes to port 80 of the proxy; in HTTPS mode the proxy
+# redirects it, and curl follows the redirect to https://<domain> - pinned to
+# this server with --resolve, so public DNS does not matter.
+# =============================================================================
+
+- name: Request /api/health through the proxy
+  ansible.builtin.shell:
+    cmd: |
+      set -u
+      domain={{ domain | quote }}
+      args=(--fail --silent --show-error --max-time 10 --retry 10 --retry-delay 3 --retry-connrefused
+            --location --write-out '\n%{url_effective} -> HTTP %{http_code}')
+      [ -z "$domain" ] || args+=(-H "Host: ${domain}" --resolve "${domain}:443:127.0.0.1")
+      rc=0
+      out="$(curl "${args[@]}" http://127.0.0.1/api/health 2>&1)" || rc=$?
+      if [ "$rc" = 60 ]; then
+        # 60 = certificate not trusted: staging or self-signed. Still check the app.
+        echo "WARNING: the certificate of ${domain} is not trusted (staging or self-signed?)"
+        rc=0
+        out="$(curl --insecure "${args[@]}" http://127.0.0.1/api/health 2>&1)" || rc=$?
+      fi
+      echo "$out"
+      exit "$rc"
+    executable: /bin/bash
+  register: app_health
+  changed_when: false
+
+- name: Show the answer
+  ansible.builtin.debug:
+    msg: "{{ app_health.stdout_lines }}"

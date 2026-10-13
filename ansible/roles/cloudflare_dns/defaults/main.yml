@@ -1,0 +1,27 @@
+---
+# =============================================================================
+# roles/cloudflare_dns/defaults/main.yml - knobs of the "cloudflare_dns" role
+# -----------------------------------------------------------------------------
+# The role runs only when the vault has vault_cloudflare_api_token (see
+# app.yml). Zone and grey/orange cloud are shared settings in group_vars/all.yml
+# (cloudflare_zone, cloudflare_proxied).
+# =============================================================================
+
+# Cloudflare's REST API (v4). Changed only for tests against a fake API.
+cloudflare_dns_api_url: https://api.cloudflare.com/client/v4
+
+# The IPv4 address the A record must point at: the address Ansible connects
+# to - the VM's static external IP when you use inventory.ini or user@IP.
+cloudflare_dns_ip: "{{ ansible_host | default(inventory_hostname) }}"
+
+# Optional: the zone's ID (Cloudflare dashboard -> your domain -> Overview,
+# right column). Empty = look it up by the name in cloudflare_zone.
+cloudflare_dns_zone_id: ""
+
+# 1 = "Auto" (Cloudflare picks the TTL, 300 s for a DNS-only record).
+cloudflare_dns_ttl: 1
+
+# Wait until Cloudflare's public resolver 1.1.1.1 answers with the new IP
+# (what Let's Encrypt will see next). Up to retries x delay seconds.
+cloudflare_dns_wait_retries: 30
+cloudflare_dns_wait_delay: 10

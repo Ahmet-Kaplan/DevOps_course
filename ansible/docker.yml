@@ -1,0 +1,58 @@
+---
+# =============================================================================
+# ansible/docker.yml - turn a fresh Debian VM into a Docker host
+# -----------------------------------------------------------------------------
+#   ./ansible/provision.sh docker.yml                       # hosts from inventory.ini
+#   ./ansible/provision.sh you@203.0.113.10 docker.yml      # no inventory file needed
+#   ./ansible/provision.sh docker.yml --check --diff        # dry run: show, change nothing
+#
+# Needs NO secrets (no vault): base packages, Docker Engine, the deploy user.
+# site.yml runs this playbook first, then app.yml (the application itself).
+#
+# A PLAY maps a group of hosts to a list of ROLES. A role is a reusable bundle
+# of tasks (+ defaults, handlers, files) in roles/<name>/ - think "function".
+# Afterwards the host runs ONLY Docker (+ the OS): nginx, certbot, the app and
+# the database all run as containers.
+# =============================================================================
+
+- name: Prepare the server - base packages, Docker Engine, deploy user
+  # "all" = every host in the inventory. With ./provision.sh user@host that is
+  # exactly one host (an inline inventory has no groups).
+  hosts: all
+  # Connect as your admin user and run each task through sudo.
+  become: true
+  # Facts are gathered below, AFTER the server is reachable.
+  gather_facts: false
+  # Default arguments for every apt task in this play. On a brand-new VM the
+  # daily apt jobs (apt-daily, unattended-upgrades) often run during the first
+  # minutes and hold the dpkg lock; wait up to 10 minutes instead of the
+  # default 60 seconds, so a fresh rebuild does not fail on "Could not get lock".
+  module_defaults:
+    ansible.builtin.apt:
+      lock_timeout: 600
+
+  pre_tasks:
+    - name: Wait until the server accepts SSH logins
+      # A VM created a moment ago is still booting, and Google's guest agent
+      # creates your login account a few seconds after sshd starts. Retrying
+      # here makes "create VM -> run provision.sh" work without a manual pause.
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+      # Only waits and changes nothing, so it also runs in a --check dry run.
+      check_mode: false
+      tags: [always]
+
+    - name: Gather facts (OS release, CPU architecture, ...)
+      # The roles use ansible_facts['distribution_release'] ("trixie") and
+      # ansible_facts['architecture'] ("x86_64") to pick the right Docker repo.
+      ansible.builtin.setup:
+      tags: [always]
+
+  roles:
+    # Tags let you run one part only:  ./ansible/provision.sh docker.yml --tags docker
+    - role: common
+      tags: [common]
+    - role: docker
+      tags: [docker]
+    - role: deploy_user
+      tags: [deploy_user]

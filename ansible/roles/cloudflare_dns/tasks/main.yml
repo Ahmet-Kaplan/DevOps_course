@@ -1,0 +1,158 @@
+---
+# =============================================================================
+# roles/cloudflare_dns/tasks/main.yml - the A record, through Cloudflare's API
+# -----------------------------------------------------------------------------
+# Stage 2 by hand: Cloudflare dashboard -> DNS -> Records -> A record
+# "devops" -> the VM's IP, grey cloud. Here the same with three HTTP calls:
+#   GET   /zones?name=<zone>                       -> the zone's ID
+#   GET   /zones/<id>/dns_records?type=A&name=...  -> the current record (if any)
+#   POST  /zones/<id>/dns_records                  -> create it, or
+#   PATCH /zones/<id>/dns_records/<record id>      -> fix IP / cloud colour
+# The calls run on YOUR LAPTOP (delegate_to: localhost): the API token never
+# reaches the server. no_log keeps the token out of the output; the
+# registered results still hold the answers, so the asserts can explain errors.
+# =============================================================================
+
+- name: Check the IP address for the A record
+  ansible.builtin.assert:
+    that:
+      - cloudflare_dns_ip is match('^[0-9]{1,3}(\.[0-9]{1,3}){3}$')
+      # Private (RFC 1918) and loopback addresses are unreachable from the internet.
+      - not (cloudflare_dns_ip is match('^(10\.|127\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)'))
+    fail_msg: >-
+      '{{ cloudflare_dns_ip }}' is not a public IPv4 address. Connect with the VM's
+      EXTERNAL IP (inventory.ini or user@IP), or set -e cloudflare_dns_ip=<external IP>.
+    quiet: true
+
+- name: Look up the zone ID of {{ cloudflare_zone }}
+  ansible.builtin.uri:
+    url: "{{ cloudflare_dns_api_url }}/zones?name={{ cloudflare_zone | urlencode }}"
+    headers:
+      Authorization: "Bearer {{ vault_cloudflare_api_token }}"
+    return_content: true
+  delegate_to: localhost
+  become: false
+  no_log: true
+  failed_when: false
+  register: cloudflare_dns_zone
+  when: cloudflare_dns_zone_id | length == 0
+
+- name: Check that the zone was found
+  ansible.builtin.assert:
+    that:
+      - cloudflare_dns_zone.status | default(0) == 200
+      - cloudflare_dns_zone.json.result | default([]) | length == 1
+    fail_msg: >-
+      Could not find the zone {{ cloudflare_zone }} (HTTP {{ cloudflare_dns_zone.status | default('-') }}):
+      {{ cloudflare_dns_zone.json.errors | default(cloudflare_dns_zone.msg | default('')) }}.
+      Is the token valid, and does it have "Zone - DNS - Edit" for this zone?
+    quiet: true
+  when: cloudflare_dns_zone_id | length == 0
+
+- name: Remember the zone ID
+  ansible.builtin.set_fact:
+    cloudflare_dns_zone_ref: "{{ cloudflare_dns_zone_id if cloudflare_dns_zone_id | length > 0 else cloudflare_dns_zone.json.result[0].id }}"
+
+- name: Read the current A record of {{ domain }}
+  ansible.builtin.uri:
+    url: "{{ cloudflare_dns_api_url }}/zones/{{ cloudflare_dns_zone_ref }}/dns_records?type=A&name={{ domain | urlencode }}"
+    headers:
+      Authorization: "Bearer {{ vault_cloudflare_api_token }}"
+    return_content: true
+  delegate_to: localhost
+  become: false
+  no_log: true
+  failed_when: false
+  register: cloudflare_dns_current
+
+- name: Check that the records could be read
+  ansible.builtin.assert:
+    that:
+      - cloudflare_dns_current.status | default(0) == 200
+      - cloudflare_dns_current.json.result | default([]) | length <= 1
+    fail_msg: >-
+      Could not read the A record(s) of {{ domain }} (HTTP {{ cloudflare_dns_current.status | default('-') }}):
+      {{ cloudflare_dns_current.json.errors | default(cloudflare_dns_current.msg | default('')) }}
+      - or there is more than one A record for this name (delete the extra ones in the dashboard).
+    quiet: true
+
+- name: Describe the record we want
+  ansible.builtin.set_fact:
+    cloudflare_dns_record: "{{ cloudflare_dns_current.json.result | first | default({}) }}"
+    cloudflare_dns_wanted:
+      type: A
+      name: "{{ domain }}"
+      content: "{{ cloudflare_dns_ip }}"
+      ttl: "{{ cloudflare_dns_ttl | int }}"
+      proxied: "{{ cloudflare_proxied | bool }}"
+      comment: Managed by Ansible (DevOps workshop)
+
+- name: Create the A record (none exists yet) for {{ domain }}
+  ansible.builtin.uri:
+    url: "{{ cloudflare_dns_api_url }}/zones/{{ cloudflare_dns_zone_ref }}/dns_records"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ vault_cloudflare_api_token }}"
+    body_format: json
+    body: "{{ cloudflare_dns_wanted }}"
+    return_content: true
+  delegate_to: localhost
+  become: false
+  no_log: true
+  failed_when: false
+  register: cloudflare_dns_write_create
+  changed_when: true
+  when: cloudflare_dns_record | length == 0
+
+- name: Update the A record (wrong IP or cloud colour) for {{ domain }}
+  ansible.builtin.uri:
+    url: "{{ cloudflare_dns_api_url }}/zones/{{ cloudflare_dns_zone_ref }}/dns_records/{{ cloudflare_dns_record.id }}"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ vault_cloudflare_api_token }}"
+    body_format: json
+    body:
+      content: "{{ cloudflare_dns_ip }}"
+      proxied: "{{ cloudflare_proxied | bool }}"
+    return_content: true
+  delegate_to: localhost
+  become: false
+  no_log: true
+  failed_when: false
+  register: cloudflare_dns_write_update
+  changed_when: true
+  when: >-
+    cloudflare_dns_record | length > 0 and
+    (cloudflare_dns_record.content != cloudflare_dns_ip or cloudflare_dns_record.proxied | bool != cloudflare_proxied | bool)
+
+- name: Check that Cloudflare created the record
+  # (Two plain asserts instead of a loop: a looped task prints each item with
+  # -v, and these results contain the request - with the token.)
+  ansible.builtin.assert:
+    that: cloudflare_dns_write_create.status | default(0) == 200 and cloudflare_dns_write_create.json.success | default(false)
+    fail_msg: >-
+      Cloudflare refused to create the record (HTTP {{ cloudflare_dns_write_create.status | default('-') }}):
+      {{ cloudflare_dns_write_create.json.errors | default(cloudflare_dns_write_create.msg | default('')) }}
+    success_msg: Created A {{ domain }} -> {{ cloudflare_dns_ip }} ({{ 'proxied' if cloudflare_proxied | bool else 'DNS only' }})
+  when: cloudflare_dns_write_create is not skipped
+
+- name: Check that Cloudflare updated the record
+  ansible.builtin.assert:
+    that: cloudflare_dns_write_update.status | default(0) == 200 and cloudflare_dns_write_update.json.success | default(false)
+    fail_msg: >-
+      Cloudflare refused to update the record (HTTP {{ cloudflare_dns_write_update.status | default('-') }}):
+      {{ cloudflare_dns_write_update.json.errors | default(cloudflare_dns_write_update.msg | default('')) }}
+    success_msg: Updated A {{ domain }} -> {{ cloudflare_dns_ip }} ({{ 'proxied' if cloudflare_proxied | bool else 'DNS only' }})
+  when: cloudflare_dns_write_update is not skipped
+
+- name: Wait until public DNS (1.1.1.1) shows {{ cloudflare_dns_ip }}
+  # Asked FROM THE SERVER (it has `dig`, roles/common). A proxied record
+  # (orange cloud) shows Cloudflare's IPs instead, so there is nothing to wait for.
+  ansible.builtin.command:
+    argv: [dig, +short, A, "{{ domain }}", "@1.1.1.1"]
+  register: cloudflare_dns_dig
+  until: cloudflare_dns_ip in cloudflare_dns_dig.stdout_lines
+  retries: "{{ cloudflare_dns_wait_retries }}"
+  delay: "{{ cloudflare_dns_wait_delay }}"
+  changed_when: false
+  when: not cloudflare_proxied | bool

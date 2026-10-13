@@ -1,0 +1,21 @@
+---
+# =============================================================================
+# roles/deploy_user/defaults/main.yml - knobs of the "deploy_user" role
+# -----------------------------------------------------------------------------
+# The account NAME is a shared setting (deploy_user in group_vars/all.yml),
+# because the app role, the systemd units and CI all need the same name.
+# =============================================================================
+
+# Supplementary groups. "docker" = may run containers (root-equivalent on this
+# host - that is the price of deploying containers without sudo).
+deploy_user_groups:
+  - docker
+
+deploy_user_shell: /bin/bash
+
+# Extra public keys allowed to log in as deploy, e.g. your laptop key for
+# `ssh deploy@<ip>`. Usually empty: you log in as your admin user and run
+# `sudo -iu deploy`. The CI key is added by the app role (from the vault).
+#   deploy_user_authorized_keys:
+#     - "ssh-ed25519 AAAA... you@laptop"
+deploy_user_authorized_keys: []

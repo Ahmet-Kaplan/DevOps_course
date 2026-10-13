@@ -1,0 +1,14 @@
+---
+# ansible-lint configuration (picked up when you run `ansible-lint` in ansible/).
+# The "production" profile is the strictest built-in rule set: fully qualified
+# module names (ansible.builtin.apt), named tasks, explicit file modes, no
+# "latest" packages, role-prefixed variables, handlers instead of
+# `when: x is changed`, ...
+profile: production
+
+# Lint offline: we use only ansible.builtin modules, so there is nothing to
+# download from Ansible Galaxy.
+offline: true
+
+exclude_paths:
+  - backups/   # encrypted backups (git-ignored), not Ansible content

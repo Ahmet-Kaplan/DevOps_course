@@ -1,0 +1,75 @@
+---
+# =============================================================================
+# access.yml - who owns the bundle, who may log in to deploy
+# =============================================================================
+
+- name: Look up the account {{ deploy_user }}
+  # Fails with "One or more supplied key could not be found" if the account is
+  # missing: run docker.yml (or site.yml) first - roles/deploy_user creates it.
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ deploy_user }}"
+
+- name: Remember its home directory
+  ansible.builtin.set_fact:
+    # passwd fields after the name: password, uid, gid, comment, HOME, shell
+    app_deploy_home: "{{ ansible_facts['getent_passwd'][deploy_user][4] }}"
+
+- name: Create the bundle folder {{ app_dir }}
+  # Owned by the deploy account, which runs deploy.sh and receives the CI
+  # deploy's rsync. A folder created by hand in stage 1 (owned by your admin
+  # login) simply changes owner here.
+  ansible.builtin.file:
+    path: "{{ app_dir }}"
+    state: directory
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0755"
+
+- name: Create ~/.ssh for {{ deploy_user }}
+  # sshd ignores authorized_keys if the folder or file is writable by others.
+  ansible.builtin.file:
+    path: "{{ app_deploy_home }}/.ssh"
+    state: directory
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0700"
+
+- name: Authorize the restricted CI deploy key for {{ deploy_user }}
+  # The PUBLIC half of the key pair in the vault; GitHub Actions holds the
+  # private half (secret DEPLOY_SSH_KEY). The regexp finds the key by its
+  # base64 body, so changed options replace the line instead of adding a copy.
+  ansible.builtin.lineinfile:
+    path: "{{ app_deploy_home }}/.ssh/authorized_keys"
+    regexp: "(^|\\s){{ vault_ci_deploy_public_key.split()[1] | regex_escape }}(\\s|$)"
+    line: "{{ app_ci_key_options }} {{ vault_ci_deploy_public_key }}"
+    create: true
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0600"
+
+# ---- Optional: pull from Docker Hub as a logged-in user --------------------------
+- name: Optional Docker Hub login (vault_docker_hub_token) for {{ deploy_user }}
+  when: vault_docker_hub_token | default('') | length > 0
+  block:
+    - name: Read the Docker client config of {{ deploy_user }}
+      ansible.builtin.slurp:
+        src: "{{ app_deploy_home }}/.docker/config.json"
+      register: app_docker_config
+      # A missing file just means "not logged in yet".
+      failed_when: false
+      # The file holds the registry login (base64 user:token): never print it, not even with -v.
+      no_log: true
+
+    - name: Run docker login (the token goes in through stdin, never on the command line)
+      ansible.builtin.command:
+        argv: [docker, login, --username, "{{ docker_hub_username }}", --password-stdin]
+        stdin: "{{ vault_docker_hub_token }}"
+      become: true
+      become_user: "{{ deploy_user }}"
+      no_log: true
+      changed_when: true
+      when: >-
+        app_docker_config.content is not defined or
+        'https://index.docker.io/v1/' not in
+        ((app_docker_config.content | b64decode | from_json).auths | default({}))

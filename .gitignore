@@ -64,3 +64,16 @@ $RECYCLE.BIN/
 *~
 *.sublime-workspace
 .history/
+
+# ---- Ansible (ansible/) ----------------------------------------------------------
+# Your server's address and login name (copy inventory.example.ini to create it).
+ansible/inventory.ini
+# The vault password: whoever has it can decrypt ansible/secrets/vault.yml.
+# Keep a copy in your password manager - it is NOT recoverable from Git.
+ansible/.vault_pass
+# Encrypted backups pulled from the server by backup.yml (database, certificates).
+ansible/backups/
+# Fingerprint of the last GitHub secrets sync (roles/github_ci) - local state.
+ansible/.github_ci_sync
+# NOT ignored on purpose: ansible/secrets/vault.yml. It is encrypted, so it can
+# be committed (private repository); only .vault_pass above can open it.

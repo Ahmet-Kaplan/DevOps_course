@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  author: Bug Squash Arena workshop
+  description: Keep the GitHub Actions deploy secrets in sync with the server (gh CLI, optional)
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+dependencies: []

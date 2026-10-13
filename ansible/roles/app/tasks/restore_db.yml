@@ -1,0 +1,87 @@
+---
+# =============================================================================
+# restore_db.yml - EMPTY database: put the backed-up data back
+# -----------------------------------------------------------------------------
+# The backend creates its (empty) tables on start-up. If the users table is
+# still empty and backup.yml saved a dump earlier, this restores it - users,
+# passwords (hashes) and scores come back. A database that already has users
+# is never touched. backup.yml only saves a dump WITH users as db-latest, so
+# after a restore the next run counts users > 0 and skips this (changed=0).
+# =============================================================================
+
+- name: Look for a database backup on this laptop for {{ domain }}
+  ansible.builtin.stat:
+    path: "{{ backup_local_dir }}/db-latest.dump.vault"
+  delegate_to: localhost
+  become: false
+  register: app_db_backup
+
+- name: Count the users in the database
+  ansible.builtin.command:
+    argv: "{{ compose_cmd + ['exec', '-T', 'db', 'psql', '-U', postgres_user, '-d', postgres_db, '-tAc', 'SELECT count(*) FROM users'] }}"
+    chdir: "{{ app_dir }}"
+  register: app_db_users
+  changed_when: false
+  when: app_restore_backups | bool and app_db_backup.stat.exists
+
+- name: Restore the database backup into the empty database
+  when: app_restore_backups | bool and app_db_backup.stat.exists and app_db_users.stdout | trim == '0'
+  block:
+    - name: Create a root-only scratch folder on the server
+      ansible.builtin.file:
+        path: "{{ app_tmp_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Upload the dump (Ansible decrypts the .vault file on the way)
+      ansible.builtin.copy:
+        src: "{{ backup_local_dir }}/db-latest.dump.vault"
+        dest: "{{ app_tmp_dir }}/db.dump"
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Stop the backend while its tables are replaced
+      ansible.builtin.command:
+        argv: "{{ compose_cmd + ['stop', 'backend'] }}"
+        chdir: "{{ app_dir }}"
+      changed_when: true
+
+    - name: Restore with pg_restore (one transaction - all or nothing)
+      # The dump is fed through stdin into the db container (the shell's "<").
+      #   --clean --if-exists  drop the empty tables the backend created first
+      #   --no-owner           objects belong to the user restoring them
+      #   --single-transaction --exit-on-error  no half-restored database
+      ansible.builtin.shell:
+        cmd: >-
+          {{ compose_cmd | map('quote') | join(' ') }} exec -T db
+          pg_restore -U {{ postgres_user | quote }} -d {{ postgres_db | quote }}
+          --clean --if-exists --no-owner --single-transaction --exit-on-error
+          < {{ (app_tmp_dir ~ '/db.dump') | quote }}
+        chdir: "{{ app_dir }}"
+      changed_when: true
+
+    - name: Count the users again
+      ansible.builtin.command:
+        argv: "{{ compose_cmd + ['exec', '-T', 'db', 'psql', '-U', postgres_user, '-d', postgres_db, '-tAc', 'SELECT count(*) FROM users'] }}"
+        chdir: "{{ app_dir }}"
+      register: app_db_users_after
+      changed_when: false
+
+    - name: Show the result
+      ansible.builtin.debug:
+        msg: "Database restored from {{ backup_local_dir }}/db-latest.dump.vault - {{ app_db_users_after.stdout | trim }} users."
+
+  always:
+    - name: Delete the scratch folder
+      ansible.builtin.file:
+        path: "{{ app_tmp_dir }}"
+        state: absent
+
+    - name: Start the backend again and wait until everything is healthy
+      ansible.builtin.command:
+        argv: "{{ compose_cmd + ['up', '-d', '--wait', '--wait-timeout', app_wait_timeout | string] }}"
+        chdir: "{{ app_dir }}"
+      changed_when: true

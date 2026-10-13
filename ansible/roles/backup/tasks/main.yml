@@ -1,0 +1,229 @@
+---
+# =============================================================================
+# roles/backup/tasks/main.yml - copy the server's DATA to your laptop, encrypted
+# -----------------------------------------------------------------------------
+# Everything else on the server can be rebuilt from Git + the vault. Two
+# things cannot:
+#   the database          users, password hashes, scores    -> pg_dump
+#   the letsencrypt volume certificate + account key         -> tar
+# Both are made on the server, fetched to this laptop, encrypted with the
+# vault password (ansible-vault) and stored as
+#   <backup_local_dir>/db-<UTC time>.dump.vault          + db-latest.dump.vault
+#   <backup_local_dir>/letsencrypt-<UTC time>.tar.gz.vault + letsencrypt-latest...
+# The *-latest files are what roles/app restores on a new server (db-latest
+# only ever points at a dump that has users - see "holds any players").
+# Plaintext copies exist only for seconds, in root-only / owner-only folders.
+# =============================================================================
+
+- name: Check the vault password file on this laptop
+  ansible.builtin.stat:
+    path: "{{ backup_vault_password_file }}"
+  delegate_to: localhost
+  become: false
+  register: backup_vault_pass
+
+- name: Fail early without a vault password (the backups are encrypted with it)
+  ansible.builtin.assert:
+    that: backup_vault_pass.stat.exists
+    fail_msg: >-
+      {{ backup_vault_password_file }} not found. Run ./ansible/bootstrap-secrets.sh
+      once, or restore .vault_pass from your password manager.
+    quiet: true
+
+- name: Ask Compose which services are running
+  ansible.builtin.command:
+    argv: "{{ compose_cmd + ['ps', '--status', 'running', '--services'] }}"
+    chdir: "{{ app_dir }}"
+  register: backup_running
+  changed_when: false
+
+- name: Fail if the database is not running (nothing to dump)
+  ansible.builtin.assert:
+    that: "'db' in backup_running.stdout_lines"
+    fail_msg: The db service is not running in {{ app_dir }} - start the stack first (./deploy/deploy.sh or app.yml).
+    quiet: true
+
+- name: Pick one timestamp for this backup (UTC)
+  ansible.builtin.set_fact:
+    backup_stamp: "{{ now(utc=true, fmt='%Y%m%dT%H%M%SZ') }}"
+
+- name: Create the backup folder on this laptop
+  ansible.builtin.file:
+    path: "{{ backup_local_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+
+- name: Make the backup files
+  block:
+    - name: Create a root-only scratch folder on the server
+      ansible.builtin.file:
+        path: "{{ backup_remote_tmp_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Create a private scratch folder on this laptop
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: bugsquash-backup-
+      delegate_to: localhost
+      become: false
+      register: backup_local_tmp
+
+    # ---- 1. Database --------------------------------------------------------------
+    - name: Dump the database (pg_dump, custom format)
+      # Runs INSIDE the db container (local socket, no password needed); the
+      # shell's ">" writes the output to a file on the server.
+      # -Fc = compressed "custom" format, restored with pg_restore.
+      ansible.builtin.shell:
+        cmd: >-
+          {{ compose_cmd | map('quote') | join(' ') }} exec -T db
+          pg_dump -U {{ postgres_user | quote }} -d {{ postgres_db | quote }} -Fc
+          > {{ (backup_remote_tmp_dir ~ '/db.dump') | quote }}
+        chdir: "{{ app_dir }}"
+      changed_when: true
+
+    - name: Check that the dump can be read back (pg_restore --list)
+      ansible.builtin.shell:
+        cmd: >-
+          {{ compose_cmd | map('quote') | join(' ') }} exec -T db pg_restore --list
+          < {{ (backup_remote_tmp_dir ~ '/db.dump') | quote }} > /dev/null
+        chdir: "{{ app_dir }}"
+      changed_when: false
+
+    - name: Count the users (for the summary, and to decide about db-latest)
+      ansible.builtin.command:
+        argv: "{{ compose_cmd + ['exec', '-T', 'db', 'psql', '-U', postgres_user, '-d', postgres_db, '-tAc', 'SELECT count(*) FROM users'] }}"
+        chdir: "{{ app_dir }}"
+      register: backup_users
+      changed_when: false
+
+    - name: Remember whether the database holds any players
+      ansible.builtin.set_fact:
+        # 0 users = an empty database (every score belongs to a user). Its dump
+        # is kept with its timestamp but never becomes db-latest: a new server
+        # would "restore" nothing, still see 0 users, and restore again on
+        # every run - and an empty database must never replace a good backup.
+        backup_db_has_users: "{{ backup_users.stdout | trim | int > 0 }}"
+
+    - name: Download the dump to this laptop
+      ansible.builtin.fetch:
+        src: "{{ backup_remote_tmp_dir }}/db.dump"
+        dest: "{{ backup_local_tmp.path }}/db.dump"
+        flat: true
+
+    - name: Encrypt it into the backup folder (ansible-vault)
+      ansible.builtin.command:
+        argv:
+          - ansible-vault
+          - encrypt
+          # provision.sh also exports ANSIBLE_VAULT_PASSWORD_FILE, so ansible-vault
+          # sees the password twice and refuses to guess ("The vault-ids
+          # default,default are available to encrypt"). This picks the file
+          # given right below.
+          - --encrypt-vault-id
+          - default
+          - --vault-password-file
+          - "{{ backup_vault_password_file }}"
+          - --output
+          - "{{ backup_local_dir }}/db-{{ backup_stamp }}.dump.vault"
+          - "{{ backup_local_tmp.path }}/db.dump"
+      delegate_to: localhost
+      become: false
+      changed_when: true
+
+    # ---- 2. Certificates ---------------------------------------------------------
+    - name: Check the certificate volume
+      ansible.builtin.include_role:
+        name: app
+        tasks_from: cert_check.yml
+      when: backup_certificates | bool
+
+    - name: Back up the letsencrypt volume
+      when: backup_certificates | bool and app_cert_present
+      block:
+        - name: Pack the volume with tar (one-off certbot container)
+          ansible.builtin.command:
+            argv: >-
+              {{ compose_cmd + ['run', '--rm', '--no-deps', '-T', '--quiet-pull',
+                 '-v', backup_remote_tmp_dir ~ ':/backup', '--entrypoint', 'sh', 'certbot',
+                 '-c', 'tar -czf /backup/letsencrypt.tar.gz -C /etc/letsencrypt .'] }}
+            chdir: "{{ app_dir }}"
+          changed_when: true
+
+        - name: Download the archive to this laptop
+          ansible.builtin.fetch:
+            src: "{{ backup_remote_tmp_dir }}/letsencrypt.tar.gz"
+            dest: "{{ backup_local_tmp.path }}/letsencrypt.tar.gz"
+            flat: true
+
+        - name: Encrypt it into the backup folder (ansible-vault)
+          ansible.builtin.command:
+            argv:
+              - ansible-vault
+              - encrypt
+              - --encrypt-vault-id   # see the database step above
+              - default
+              - --vault-password-file
+              - "{{ backup_vault_password_file }}"
+              - --output
+              - "{{ backup_local_dir }}/letsencrypt-{{ backup_stamp }}.tar.gz.vault"
+              - "{{ backup_local_tmp.path }}/letsencrypt.tar.gz"
+          delegate_to: localhost
+          become: false
+          changed_when: true
+
+    # ---- 3. Point the *-latest files at this backup -----------------------------
+    - name: Update the *-latest copies (what a new server restores)
+      # remote_src: copy the encrypted file as it is. Without it, copy would
+      # DECRYPT a vault file on the way (as roles/app wants it, not here).
+      ansible.builtin.copy:
+        src: "{{ backup_local_dir }}/{{ item.from }}"
+        dest: "{{ backup_local_dir }}/{{ item.to }}"
+        remote_src: true
+        mode: "0600"
+      loop: >-
+        {{ ([{'from': 'db-' ~ backup_stamp ~ '.dump.vault', 'to': 'db-latest.dump.vault'}]
+            if backup_db_has_users else [])
+           + ([{'from': 'letsencrypt-' ~ backup_stamp ~ '.tar.gz.vault', 'to': 'letsencrypt-latest.tar.gz.vault'}]
+              if backup_certificates | bool and app_cert_present | default(false) else []) }}
+      loop_control:
+        label: "{{ item.to }}"
+      delegate_to: localhost
+      become: false
+
+  always:
+    - name: Delete the plaintext files on the server
+      ansible.builtin.file:
+        path: "{{ backup_remote_tmp_dir }}"
+        state: absent
+
+    - name: Delete the plaintext files on this laptop
+      ansible.builtin.file:
+        path: "{{ backup_local_tmp.path }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      when: backup_local_tmp.path is defined
+
+- name: List the backup folder
+  ansible.builtin.find:
+    paths: "{{ backup_local_dir }}"
+    patterns: ["*.vault"]
+  delegate_to: localhost
+  become: false
+  register: backup_files
+
+- name: Summary
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['Backup ' ~ backup_stamp ~ ' of ' ~ inventory_hostname ~ ': ' ~ (backup_users.stdout | trim) ~ ' users'
+          ~ (', certificate for ' ~ domain if app_cert_present | default(false) else ', no certificate (stage 1/2)'),
+          'Folder: ' ~ backup_local_dir]
+         + ([] if backup_db_has_users | default(true) else
+            ['The database has no users: db-latest.dump.vault was NOT updated (nothing to restore).'])
+         + (backup_files.files | sort(attribute='path')
+            | map(attribute='path') | map('basename') | list) }}

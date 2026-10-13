@@ -1,0 +1,14 @@
+---
+galaxy_info:
+  author: Bug Squash Arena workshop
+  description: Deploy bundle, .env.prod from the vault, restores, deploy.sh and the renewal timer
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+# Needs Docker and the deploy account. docker.yml (roles common, docker,
+# deploy_user) provides both; site.yml runs it first.
+dependencies: []

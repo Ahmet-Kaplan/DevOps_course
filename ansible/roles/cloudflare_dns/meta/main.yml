@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  author: Bug Squash Arena workshop
+  description: Create or update the A record of the site through the Cloudflare API (optional)
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+dependencies: []

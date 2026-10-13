@@ -1,0 +1,197 @@
+---
+# =============================================================================
+# roles/docker/tasks/main.yml - Docker Engine from download.docker.com
+# -----------------------------------------------------------------------------
+# The Ansible version of deploy/stage-1-ip-http.md, step 4. Compare the two: the
+# shell commands say HOW, these tasks say WHAT the result must be - and can
+# therefore be re-run safely at any time.
+# =============================================================================
+
+# ---- 0. Where are we? -------------------------------------------------------
+- name: Check whether Docker Engine is installed already
+  ansible.builtin.stat:
+    path: /usr/bin/dockerd
+  register: docker_dockerd_binary
+
+- name: Decide whether the steps that need a real engine can run
+  ansible.builtin.set_fact:
+    # In a dry run (--check) Ansible changes nothing. On a server WITHOUT Docker
+    # that means: no repository file, so apt does not know docker-ce, and there
+    # is no dockerd to configure, start or ask for its version. Those steps are
+    # then skipped; everything else still shows what it WOULD change.
+    docker_engine_available: "{{ not ansible_check_mode or docker_dockerd_binary.stat.exists }}"
+
+- name: Note about this dry run
+  ansible.builtin.debug:
+    msg: >-
+      Dry run on a server without Docker: the steps that need the installed
+      engine (package install, daemon start, version report, smoke test) are
+      skipped. Run without --check to really install it.
+  when: not docker_engine_available
+
+# ---- 1. Make room: prerequisites in, conflicting packages out -----------------
+- name: Install the packages this role needs
+  ansible.builtin.apt:
+    name: "{{ docker_prerequisites }}"
+    state: present
+
+- name: Remove Debian's own Docker packages (they conflict with docker-ce)
+  ansible.builtin.apt:
+    name: "{{ docker_conflicting_packages }}"
+    state: absent
+
+# ---- 2. Trust Docker's repository ----------------------------------------------
+- name: Create /etc/apt/keyrings (home of third-party repository keys)
+  ansible.builtin.file:
+    path: "{{ docker_apt_key_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download Docker's repository signing key
+  # apt refuses every package from the repository that is not signed with this
+  # key. get_url downloads only if the file is missing, so re-runs are no-ops.
+  ansible.builtin.get_url:
+    url: "{{ docker_apt_key_url }}"
+    dest: "{{ docker_apt_key_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Add Docker's apt repository (/etc/apt/sources.list.d/docker.sources)
+  # deb822 is the modern multi-line ".sources" format (Debian 12+ uses it for
+  # its own repositories too). Signed-By ties THIS repository to THIS key only.
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: [deb]
+    uris: "{{ docker_apt_repo_url }}"
+    # "trixie" on Debian 13, "bookworm" on Debian 12 - from the gathered facts.
+    suites: ["{{ ansible_facts['distribution_release'] }}"]
+    components: [stable]
+    architectures: ["{{ docker_apt_arch_map[ansible_facts['architecture']] }}"]
+    signed_by: "{{ docker_apt_key_path }}"
+    state: present
+  register: docker_apt_repo
+
+- name: Refresh the apt index so it knows Docker's packages
+  # Must run right after the repository appears. The common role's
+  # cache_valid_time would skip the refresh (the index is "fresh" - but it was
+  # built before this repository existed). Also runs while Docker is not
+  # installed yet, in case an earlier run failed between these two steps.
+  ansible.builtin.apt:
+    update_cache: true
+  when: docker_apt_repo is changed or not docker_dockerd_binary.stat.exists
+
+# ---- 3. Install and configure the engine -----------------------------------------
+- name: Install Docker Engine, CLI, containerd and the buildx/compose plugins
+  # Installing docker-ce also creates the "docker" group and starts the daemon.
+  ansible.builtin.apt:
+    name: "{{ docker_packages }}"
+    state: present
+  when: docker_engine_available
+
+- name: Create /etc/docker
+  ansible.builtin.file:
+    path: /etc/docker
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure the Docker daemon (/etc/docker/daemon.json)
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    content: "{{ docker_daemon_config | to_nice_json(indent=2) }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+    # Ansible writes a temporary file, lets dockerd check it, and only then
+    # replaces the real one. A typo can therefore never stop the daemon from
+    # starting (which would take every container down with it).
+    validate: dockerd --validate --config-file=%s
+  notify: Restart docker
+
+- name: Start Docker now and on every boot
+  ansible.builtin.systemd_service:
+    name: docker
+    state: started
+    enabled: true
+  when: docker_engine_available
+
+- name: Let the admin account(s) use docker without sudo
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: docker
+    # append: true = ADD this group, keep all others. Without it, the account
+    # would be removed from every group not listed here (sudo included!).
+    append: true
+  loop: "{{ docker_users }}"
+  when: docker_engine_available
+  notify: Reset SSH connection
+
+- name: Apply the daemon config and new group memberships now, not at the end
+  # Handlers normally wait for the end of the play. But the checks below - and
+  # every later task that talks to Docker (app.yml) - must already see the
+  # restarted daemon and a fresh SSH session with the docker group.
+  ansible.builtin.meta: flush_handlers
+
+# ---- 4. Prove it works -----------------------------------------------------------
+- name: Report the installed versions
+  when: docker_engine_available
+  block:
+    - name: Ask the client, the daemon and the plugins for their versions
+      ansible.builtin.command:
+        argv: "{{ item }}"
+      loop:
+        - [docker, --version]
+        - [docker, compose, version]
+        - [docker, buildx, version]
+        # {% raw %} stops Ansible's Jinja from touching Docker's own Go
+        # template syntax, which also uses {{ }}.
+        - - docker
+          - info
+          - --format
+          # ">-" folds these lines into ONE line, joined with spaces.
+          - >-
+            {% raw %}server {{.ServerVersion}}, cgroup v{{.CgroupVersion}}
+            ({{.CgroupDriver}} driver), storage {{.Driver}},
+            live-restore {{.LiveRestoreEnabled}}{% endraw %}
+      register: docker_version_report
+      # Read-only commands: never "changed", and safe to run in --check mode.
+      changed_when: false
+      check_mode: false
+
+    - name: Show the versions
+      ansible.builtin.debug:
+        msg: "{{ docker_version_report.results | map(attribute='stdout') | list }}"
+
+- name: Smoke test - run a throwaway container
+  when: docker_smoke_test | bool and not ansible_check_mode
+  block:
+    - name: Remember whether the test image is on this host already
+      ansible.builtin.command:
+        argv: [docker, image, ls, --quiet, "{{ docker_smoke_test_image }}"]
+      register: docker_smoke_image_before
+      changed_when: false
+
+    - name: Run "docker run --rm {{ docker_smoke_test_image }}"
+      # Exercises the whole chain: CLI -> dockerd -> registry pull ->
+      # containerd -> runc -> a container that prints a message and exits.
+      # --rm deletes the container afterwards.
+      ansible.builtin.command:
+        argv: [docker, run, --rm, "{{ docker_smoke_test_image }}"]
+      register: docker_smoke_run
+      # The test leaves the server exactly as it found it (see the next task),
+      # so it does not count as a change.
+      changed_when: false
+
+    - name: Remove the test image again (only if this run pulled it)
+      ansible.builtin.command:
+        argv: [docker, image, rm, "{{ docker_smoke_test_image }}"]
+      when: docker_smoke_image_before.stdout | length == 0
+      changed_when: false
+
+    - name: Show what the test container printed
+      ansible.builtin.debug:
+        msg: "{{ docker_smoke_run.stdout_lines | select | first }}"

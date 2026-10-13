@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  author: Bug Squash Arena workshop
+  description: Encrypted backup of the database and the Let's Encrypt volume to the control machine
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+dependencies: []

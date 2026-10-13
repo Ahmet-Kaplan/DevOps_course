@@ -1,0 +1,24 @@
+---
+# =============================================================================
+# roles/docker/handlers/main.yml
+# -----------------------------------------------------------------------------
+# A HANDLER is a task that runs only when another task NOTIFIES it - and only
+# if that task reported "changed". It runs once, at the end of the play (or at
+# a `meta: flush_handlers`), no matter how many tasks notified it. Classic use:
+# restart a service only when its config file really changed.
+# =============================================================================
+
+- name: Restart docker
+  # Not "reload": log-driver/log-opts are only read when dockerd starts.
+  # Thanks to live-restore, running containers survive the restart.
+  ansible.builtin.systemd_service:
+    name: docker
+    state: restarted
+  # In a --check dry run on a server without Docker there is nothing to restart.
+  when: docker_engine_available
+
+- name: Reset SSH connection
+  # Linux reads a user's groups when the SSH session STARTS. Ansible keeps one
+  # multiplexed SSH connection open (ControlPersist), so after adding our
+  # login user to the "docker" group we must reconnect for it to count.
+  ansible.builtin.meta: reset_connection

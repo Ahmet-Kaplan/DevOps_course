@@ -1,0 +1,37 @@
+---
+# =============================================================================
+# roles/app/tasks/main.yml - put Bug Squash Arena on the server
+# -----------------------------------------------------------------------------
+# The manual stages 1-4, written down as tasks. Each file is one step:
+#
+#   access.yml         the bundle folder, the CI key, (optional) Docker Hub login
+#   bundle.yml         copy docker-compose.prod.yml + deploy/   (stage 1: scp)
+#   env.yml            render .env.prod from the vault          (stage 1: your editor)
+#   restore_certs.yml  NEW server: put the backed-up certificate back
+#   deploy.yml         ./deploy/deploy.sh, only if something changed (stage 4)
+#   restore_db.yml     EMPTY database: put the backed-up data back
+#   timer.yml          the certificate renewal timer            (stage 3)
+#
+# Getting a NEW certificate is the next role's job (roles/tls).
+# =============================================================================
+
+- name: Folder, SSH key and registry login for the deploy account
+  ansible.builtin.import_tasks: access.yml
+
+- name: Copy the deploy bundle
+  ansible.builtin.import_tasks: bundle.yml
+
+- name: Render .env.prod
+  ansible.builtin.import_tasks: env.yml
+
+- name: Restore the certificates (new server only)
+  ansible.builtin.import_tasks: restore_certs.yml
+
+- name: Deploy (only when needed)
+  ansible.builtin.import_tasks: deploy.yml
+
+- name: Restore the database (empty database only)
+  ansible.builtin.import_tasks: restore_db.yml
+
+- name: Certificate renewal timer
+  ansible.builtin.import_tasks: timer.yml

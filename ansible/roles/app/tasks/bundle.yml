@@ -1,0 +1,77 @@
+---
+# =============================================================================
+# bundle.yml - copy the deploy bundle from this checkout to the server
+# -----------------------------------------------------------------------------
+# Same result as stage 1's `scp` and stage 4's `rsync --delete`:
+#   <repo>/docker-compose.prod.yml -> <app_dir>/docker-compose.prod.yml
+#   <repo>/deploy/                 -> <app_dir>/deploy/   (an exact mirror)
+# Scripts (*.sh) get mode 0755, everything else 0644, whatever the modes on
+# your laptop are (a checkout on Windows loses the executable bit).
+# .env.prod is NOT part of the bundle: env.yml renders it.
+# =============================================================================
+
+- name: List the files of deploy/ on this laptop
+  ansible.builtin.find:
+    paths: "{{ app_bundle_src }}/deploy"
+    recurse: true
+    file_type: any
+    # Skip hidden files (.DS_Store, editor swap files, ...).
+    hidden: false
+  delegate_to: localhost
+  # Tasks on YOUR laptop must not use sudo (the play uses become for the server).
+  become: false
+  register: app_bundle_local
+
+- name: Work out the bundle paths
+  ansible.builtin.set_fact:
+    # Paths relative to the repository root, e.g. "deploy/nginx/snippets/healthz.conf".
+    app_bundle_dirs: >-
+      {{ ['deploy'] + (app_bundle_local.files | selectattr('isdir') | map(attribute='path')
+         | map('relpath', app_bundle_src) | sort) }}
+    app_bundle_files: >-
+      {{ ['docker-compose.prod.yml'] + (app_bundle_local.files | selectattr('isreg') | map(attribute='path')
+         | map('relpath', app_bundle_src) | sort) }}
+
+- name: Create the bundle's folders on the server
+  ansible.builtin.file:
+    path: "{{ app_dir }}/{{ item }}"
+    state: directory
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0755"
+  loop: "{{ app_bundle_dirs }}"
+
+- name: Copy the bundle files (only the ones that differ are transferred)
+  # copy compares checksums first, so an unchanged file reports "ok".
+  ansible.builtin.copy:
+    src: "{{ app_bundle_src }}/{{ item }}"
+    dest: "{{ app_dir }}/{{ item }}"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "{{ '0755' if item.endswith('.sh') else '0644' }}"
+  loop: "{{ app_bundle_files }}"
+  register: app_bundle_copy
+
+- name: Find files under deploy/ on the server
+  ansible.builtin.find:
+    paths: "{{ app_dir }}/deploy"
+    recurse: true
+    file_type: any
+    hidden: true
+  register: app_bundle_remote
+
+- name: Delete files that are no longer in the bundle (like rsync --delete)
+  # E.g. a config file that was renamed in Git. Leftovers could otherwise be
+  # picked up by nginx's include patterns.
+  ansible.builtin.file:
+    path: "{{ app_dir }}/{{ item }}"
+    state: absent
+  # Deepest paths first, so a folder's files go before the folder itself.
+  loop: >-
+    {{ app_bundle_remote.files | map(attribute='path') | map('relpath', app_dir)
+       | reject('in', app_bundle_dirs + app_bundle_files) | sort | reverse | list }}
+  register: app_bundle_stale
+
+- name: Remember whether the bundle changed
+  ansible.builtin.set_fact:
+    app_bundle_changed: "{{ app_bundle_copy is changed or app_bundle_stale is changed }}"

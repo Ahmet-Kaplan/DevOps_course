@@ -1,0 +1,10 @@
+---
+- name: Recreate the backend
+  # `up -d` compares each container with the configuration: only the backend
+  # (whose COOKIE_SECURE changed) is recreated; --wait = until healthy again.
+  ansible.builtin.command:
+    argv: "{{ compose_cmd + ['up', '-d', '--wait', '--wait-timeout', '180'] }}"
+    chdir: "{{ app_dir }}"
+  become: true
+  become_user: "{{ deploy_user }}"
+  changed_when: true

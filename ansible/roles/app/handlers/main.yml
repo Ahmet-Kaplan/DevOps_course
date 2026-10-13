@@ -1,0 +1,6 @@
+---
+# Runs only when a unit file in /etc/systemd/system changed (see tasks/timer.yml).
+- name: Reload systemd
+  # systemd caches unit files in memory; daemon-reload makes it read them again.
+  ansible.builtin.systemd_service:
+    daemon_reload: true

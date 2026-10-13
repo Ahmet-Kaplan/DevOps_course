@@ -1,0 +1,20 @@
+---
+# =============================================================================
+# ansible/site.yml - EVERYTHING: a fresh VM becomes the running site
+# -----------------------------------------------------------------------------
+#   ./ansible/provision.sh                      # = site.yml on the hosts in inventory.ini
+#   ./ansible/provision.sh --new-vm             # the VM was recreated (new SSH host key)
+#   ./ansible/provision.sh you@203.0.113.10     # no inventory file needed
+#
+# "site.yml" is Ansible's traditional name for "the whole infrastructure".
+# It only imports the two playbooks, in order:
+#   docker.yml  the machine: base packages, Docker Engine, the deploy user
+#   app.yml     the application: bundle, .env.prod, restores, deploy, HTTPS
+# Each one can also be run on its own.
+# =============================================================================
+
+- name: The machine - Docker host
+  ansible.builtin.import_playbook: docker.yml
+
+- name: The application - Bug Squash Arena
+  ansible.builtin.import_playbook: app.yml

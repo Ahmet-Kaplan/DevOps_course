@@ -1,0 +1,86 @@
+---
+# =============================================================================
+# roles/tls/tasks/main.yml - HTTPS for {{ domain }}, without a manual step
+# -----------------------------------------------------------------------------
+# Stage 3 by hand was: certbot certonly ..., restart the proxy, set
+# COOKIE_SECURE=true, up -d. Here the same happens through deploy/tls.sh:
+#
+#   certificate exists?  yes -> tls.sh renew   (renews if due; makes sure the
+#                                               proxy serves it, e.g. after a restore)
+#                        no  -> tls.sh issue   (asks Let's Encrypt)
+#
+# tls.sh issue exits with 3 when DNS does not point at this server yet. That
+# is NOT a failure: the site keeps running over plain HTTP, Ansible prints a
+# warning, and the renewal timer (twice a day) or the next Ansible run finishes
+# the job once DNS is right.
+# =============================================================================
+
+- name: Check for an existing certificate for {{ domain }}
+  ansible.builtin.command:
+    argv: [/bin/bash, "{{ app_dir }}/deploy/tls.sh", has-cert]
+  become: true
+  become_user: "{{ deploy_user }}"
+  environment:
+    NO_COLOR: "1"
+  register: tls_has_cert
+  changed_when: false
+  # 0 = yes, 1 = no; anything else is a real error.
+  failed_when: tls_has_cert.rc not in [0, 1]
+
+- name: Renew it if due (tls.sh renew)
+  ansible.builtin.command:
+    argv: [/bin/bash, "{{ app_dir }}/deploy/tls.sh", renew]
+  become: true
+  become_user: "{{ deploy_user }}"
+  environment:
+    NO_COLOR: "1"
+  register: tls_renew
+  # Only a real renewal, or switching the proxy to HTTPS, is a change.
+  changed_when: >-
+    'Certificate renewed' in tls_renew.stdout
+    or 'Proxy restarted in HTTPS mode' in tls_renew.stdout
+  when: tls_has_cert.rc == 0
+
+- name: Request a certificate from Let's Encrypt (tls.sh issue)
+  ansible.builtin.command:
+    argv: >-
+      {{ ['/bin/bash', app_dir ~ '/deploy/tls.sh', 'issue']
+         + (['--staging'] if tls_staging | bool else []) }}
+  become: true
+  become_user: "{{ deploy_user }}"
+  environment:
+    NO_COLOR: "1"
+    FORCE: "{{ '1' if tls_force | bool else '0' }}"
+  register: tls_issue
+  changed_when: tls_issue.rc == 0
+  # 3 = DNS does not point here yet: reported below, not a failure.
+  failed_when: tls_issue.rc not in [0, 3]
+  when: tls_has_cert.rc == 1 and tls_issue_certificate | bool
+
+- name: WARNING - no certificate yet, the site stays on plain HTTP
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['WARNING: DNS for ' ~ domain ~ ' does not point at this server yet, so no certificate was requested.',
+          'The site keeps working over http:// (COOKIE_SECURE=false). Fix the A record, then re-run',
+          'provision.sh - or just wait: the renewal timer retries twice a day.']
+         + tls_issue.stderr_lines | select | list }}
+  when: tls_issue.rc | default(0) == 3
+
+- name: HTTPS works now - set COOKIE_SECURE=true in .env.prod
+  # The app role computed "false" before the certificate existed. On the
+  # next run it computes "true" by itself, so this stays idempotent.
+  ansible.builtin.lineinfile:
+    path: "{{ app_dir }}/.env.prod"
+    regexp: "^COOKIE_SECURE="
+    line: COOKIE_SECURE=true
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0600"
+  # With --diff, lineinfile would print the WHOLE file before and after -
+  # including POSTGRES_PASSWORD and JWT_SECRET. Never for this file.
+  diff: false
+  notify: Recreate the backend
+  when: tls_issue.rc | default(1) == 0
+
+- name: Recreate the backend now (not at the end of the play)
+  ansible.builtin.meta: flush_handlers

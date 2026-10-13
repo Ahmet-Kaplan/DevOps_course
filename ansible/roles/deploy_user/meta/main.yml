@@ -1,0 +1,16 @@
+---
+galaxy_info:
+  author: Bug Squash Arena workshop
+  description: Unprivileged deploy account that may use Docker but not sudo
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+# This role needs the "docker" group, which installing Docker creates. The
+# ORDER is decided by docker.yml (common -> docker -> deploy_user) instead of a
+# dependency here: a playbook that lists its roles is easier to read than a
+# chain of hidden role dependencies.
+dependencies: []

@@ -1,0 +1,49 @@
+---
+# =============================================================================
+# deploy.yml - run ./deploy/deploy.sh, but only when it has something to do
+# -----------------------------------------------------------------------------
+# deploy.sh (stage 4) is safe to run at any time, but it always pulls images
+# and reports work. Ansible's promise is "a second run changes nothing", so
+# the role calls it only if:
+#   * a bundle file or .env.prod changed,
+#   * a certificate was just restored, or
+#   * one of the services is not running (self-healing), or
+#   * you asked for it: -e app_force_deploy=true (e.g. to pull a newer "latest").
+# =============================================================================
+
+- name: Ask Compose which services are running
+  ansible.builtin.command:
+    argv: "{{ compose_cmd + ['ps', '--status', 'running', '--services'] }}"
+    chdir: "{{ app_dir }}"
+  register: app_running
+  changed_when: false
+  failed_when: false
+
+- name: Decide whether deploy.sh must run
+  ansible.builtin.set_fact:
+    app_deploy_reasons: >-
+      {{ (['forced with app_force_deploy=true'] if app_force_deploy | bool else [])
+         + (['the bundle changed'] if app_bundle_changed else [])
+         + (['.env.prod changed'] if app_env_file is changed else [])
+         + (['a certificate was restored'] if app_restore_certs else [])
+         + (['not running: ' ~ (app_services | difference(app_running.stdout_lines) | join(', '))]
+            if app_services | difference(app_running.stdout_lines) | length > 0 else []) }}
+
+- name: Run ./deploy/deploy.sh (pull, start, wait for healthy, smoke tests) as {{ deploy_user }}
+  # The same script, user and folder as the CI deploy job. /bin/bash <file>
+  # works even if a file lost its executable bit.
+  ansible.builtin.command:
+    argv: [/bin/bash, "{{ app_dir }}/deploy/deploy.sh"]
+    chdir: "{{ app_dir }}"
+  become: true
+  become_user: "{{ deploy_user }}"
+  environment:
+    NO_COLOR: "1"
+  register: app_deploy
+  changed_when: true
+  when: app_deploy_reasons | length > 0
+
+- name: Show why it ran and how it ended
+  ansible.builtin.debug:
+    msg: "{{ ['Reason: ' ~ (app_deploy_reasons | join('; '))] + app_deploy.stdout_lines[-12:] }}"
+  when: app_deploy_reasons | length > 0

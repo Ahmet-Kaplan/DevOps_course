@@ -1,0 +1,101 @@
+---
+# =============================================================================
+# ansible/group_vars/all.yml - NON-secret settings shared by every playbook
+# -----------------------------------------------------------------------------
+# Ansible loads group_vars/<group>.yml automatically for every host in <group>.
+# "all" contains every host, so these values apply to the whole project. The
+# file sits next to the playbooks, so it is also loaded when ./provision.sh
+# uses an inline inventory ("user@host") instead of inventory.ini.
+#
+# Rule of thumb for what goes WHERE:
+#   group_vars/all.yml   settings you could print on a slide (this file)
+#   secrets/vault.yml    passwords, keys, tokens - encrypted with ansible-vault,
+#                        loaded only by the play that needs them (app.yml)
+#   roles/*/defaults     a role's own knobs, prefixed with the role name
+#                        (docker_users, common_apt_upgrade, ...)
+#
+# Precedence, lowest to highest (simplified): role defaults < group_vars <
+# host_vars < play vars / vars_files < `-e` on the command line. So any value
+# here can be overridden for ONE run, without editing the file:
+#     ./ansible/provision.sh -e image_tag=sha-1a2b3c4
+# =============================================================================
+
+# ---- The site -----------------------------------------------------------------
+# Public DNS name of the application. Becomes DOMAIN in .env.prod: the nginx
+# proxy container builds its server_name / certificate paths from it, and
+# deploy/tls.sh requests the Let's Encrypt certificate for it.
+domain: devops.gulfheight.com
+
+# E-mail for the Let's Encrypt account. Optional: empty = register without an
+# address (Let's Encrypt stopped sending expiry e-mails in 2025, and renewal is
+# automatic via the systemd timer anyway).
+letsencrypt_email: ""
+
+# ---- Images -------------------------------------------------------------------
+# Docker Hub account the ci-main workflow pushes to. The repositories are
+# PUBLIC, so the server can pull without `docker login`.
+#   <docker_hub_username>/bugsquash-backend:<image_tag>
+#   <docker_hub_username>/bugsquash-frontend:<image_tag>
+docker_hub_username: alhuraibisaeed
+
+# Default tag written to .env.prod. "latest" = newest build of main; the CI
+# deploy job passes an immutable sha-* tag on the command line instead.
+image_tag: latest
+
+# ---- Server layout --------------------------------------------------------------
+# Directory that holds the deploy bundle (docker-compose.prod.yml, deploy/,
+# .env.prod). There is no git clone on the server: Ansible and CI copy the
+# bundle there, the images come from Docker Hub.
+app_dir: /opt/devops-workshop
+
+# Unprivileged account that owns app_dir, runs deploy.sh and is the SSH target
+# of the CI deploy job. Member of the "docker" group, NOT of "sudo".
+deploy_user: deploy
+
+# The command line every stage uses, as a list (Ansible runs it in app_dir):
+#     docker compose -f docker-compose.prod.yml --env-file .env.prod <command>
+compose_cmd: [docker, compose, -f, docker-compose.prod.yml, --env-file, .env.prod]
+# Must match `name:` in docker-compose.prod.yml. Compose puts it in front of
+# every volume name: bugsquash_pgdata, bugsquash_letsencrypt, ...
+compose_project: bugsquash
+
+# Database name and user, written to .env.prod (POSTGRES_DB / POSTGRES_USER).
+# Same values as .env.prod.example. backup.yml uses them for pg_dump.
+postgres_db: bugsquash
+postgres_user: bugsquash
+
+# ---- Secrets and backups (files on YOUR LAPTOP, next to this folder) -------------
+# The encrypted secrets, created once by ./ansible/bootstrap-secrets.sh.
+# app.yml stops with a clear message if the file does not exist.
+secrets_file: "{{ playbook_dir }}/secrets/vault.yml"
+
+# Where backup.yml stores the encrypted backups (database dump + certificates),
+# and where app.yml looks for them when it builds a NEW server:
+#   <backup_local_dir>/db-latest.dump.vault
+#   <backup_local_dir>/letsencrypt-latest.tar.gz.vault
+# One folder per domain, so two sites can never restore each other's data.
+# Git-ignored (see .gitignore). Keep a copy somewhere safe, e.g. a cloud drive.
+backup_local_dir: "{{ playbook_dir }}/backups/{{ domain }}"
+
+# ---- Cloudflare DNS (optional) ---------------------------------------------------
+# Only used when secrets/vault.yml contains vault_cloudflare_api_token. Then
+# app.yml points the A record <domain> at the server's IP automatically
+# (roles/cloudflare_dns). Without a token you keep managing DNS by hand (stage 2).
+cloudflare_zone: gulfheight.com
+# false = "DNS only" (grey cloud): visitors connect straight to the VM, and
+# Let's Encrypt's HTTP-01 check reaches our nginx directly. true = traffic goes
+# through Cloudflare's proxy (orange cloud) - then also enable the real-IP
+# snippet in deploy/nginx/ so logs and rate limits see the visitor's IP.
+cloudflare_proxied: false
+
+# ---- GitHub Actions (optional) ----------------------------------------------------
+# Repository whose deploy secrets (DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY,
+# DEPLOY_KNOWN_HOSTS) and variable ENABLE_AUTO_DEPLOY Ansible can keep in sync.
+github_repo: Mohammed-Alhuraibi/DevOps_course
+
+# Feature flag. A recreated VM has a NEW SSH host key, so the DEPLOY_KNOWN_HOSTS
+# secret must be updated or every CI deploy fails with "Host key verification
+# failed". true = app.yml does that for you with the GitHub CLI on your laptop
+# (one-time setup: `gh auth login`); it is skipped when gh is not logged in.
+# false = you manage the GitHub settings by hand.
+github_ci_sync: false

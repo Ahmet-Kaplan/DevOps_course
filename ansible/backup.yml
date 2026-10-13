@@ -1,0 +1,24 @@
+---
+# =============================================================================
+# ansible/backup.yml - save the server's data to your laptop (encrypted)
+# -----------------------------------------------------------------------------
+#   ./ansible/provision.sh backup.yml                    # hosts from inventory.ini
+#   ./ansible/provision.sh you@203.0.113.10 backup.yml   # no inventory file needed
+#
+# Run it BEFORE you delete a VM, and whenever the data matters (e.g. after a
+# workshop session). Result, in ansible/backups/<domain>/ (git-ignored):
+#   db-<time>.dump.vault           + db-latest.dump.vault
+#   letsencrypt-<time>.tar.gz.vault + letsencrypt-latest.tar.gz.vault
+# encrypted with the vault password. On a NEW server, app.yml restores the
+# *-latest files automatically (see roles/app/tasks/restore_*.yml).
+#
+# Needs no secrets from the vault - only the vault PASSWORD, to encrypt.
+# =============================================================================
+
+- name: Back up the database and the certificates
+  hosts: all
+  become: true
+  gather_facts: false
+
+  roles:
+    - role: backup

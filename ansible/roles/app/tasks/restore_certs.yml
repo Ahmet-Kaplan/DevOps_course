@@ -1,0 +1,64 @@
+---
+# =============================================================================
+# restore_certs.yml - NEW server: put the backed-up certificate back
+# -----------------------------------------------------------------------------
+# Runs only when the letsencrypt volume has no certificate for {{ domain }} and
+# backup.yml saved one earlier. Restoring (instead of asking Let's Encrypt
+# again) means HTTPS works from the very first start, and we never run into
+# Let's Encrypt's rate limits while rebuilding.
+# Happens BEFORE the stack starts, so the proxy starts in HTTPS mode at once.
+# =============================================================================
+
+- name: Restore the certificate backup into the letsencrypt volume
+  when: app_restore_certs
+  block:
+    - name: Create a root-only scratch folder on the server
+      ansible.builtin.file:
+        path: "{{ app_tmp_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Upload the backup (Ansible decrypts the .vault file on the way)
+      # copy decrypts vault-encrypted source files automatically, using the
+      # same vault password as the secrets.
+      ansible.builtin.copy:
+        src: "{{ backup_local_dir }}/letsencrypt-latest.tar.gz.vault"
+        dest: "{{ app_tmp_dir }}/letsencrypt.tar.gz"
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Unpack it into the volume (one-off certbot container, like stage 3)
+      # `compose run` also CREATES the volume, with the labels Compose expects,
+      # so the stack adopts it later without warnings. -v adds the scratch
+      # folder read-only; tar keeps owners and modes (private keys stay 0600).
+      ansible.builtin.command:
+        argv: >-
+          {{ compose_cmd + ['run', '--rm', '--no-deps', '-T', '--quiet-pull',
+             '-v', app_tmp_dir ~ ':/restore:ro', '--entrypoint', 'sh', 'certbot',
+             '-c', 'tar -xzf /restore/letsencrypt.tar.gz -C /etc/letsencrypt'] }}
+        chdir: "{{ app_dir }}"
+      changed_when: true
+
+  always:
+    - name: Delete the scratch folder (the private key must not linger)
+      ansible.builtin.file:
+        path: "{{ app_tmp_dir }}"
+        state: absent
+
+- name: Check the volume again
+  ansible.builtin.import_tasks: cert_check.yml
+  when: app_restore_certs
+
+- name: Make sure the backup really contained a certificate for {{ domain }}
+  ansible.builtin.assert:
+    that: app_cert_present
+    fail_msg: >-
+      {{ backup_local_dir }}/letsencrypt-latest.tar.gz.vault was restored, but the
+      volume still has no certificate for {{ domain }}. Was the backup made for
+      another domain? Move the file away and run again (a new certificate is
+      then requested from Let's Encrypt).
+    success_msg: Certificate for {{ domain }} restored from backup.
+  when: app_restore_certs

@@ -1,0 +1,18 @@
+---
+# =============================================================================
+# roles/tls/defaults/main.yml - knobs of the "tls" role (stage 3, automated)
+# =============================================================================
+
+# true = request a certificate from Let's Encrypt when there is none yet.
+# false = never ask (the site stays on plain HTTP unless a certificate is
+# restored from backup). One-off: -e tls_issue_certificate=false
+tls_issue_certificate: true
+
+# true = Let's Encrypt's STAGING CA: untrusted test certificates, generous
+# rate limits. Use it for a first try; afterwards run once more with
+# -e tls_staging=false and tls.sh replaces the staging certificate.
+tls_staging: false
+
+# Skip tls.sh's "does DNS point at this server?" check. Needed when the record
+# is proxied by Cloudflare (orange cloud): DNS then shows Cloudflare's IPs.
+tls_force: "{{ cloudflare_proxied | default(false) }}"

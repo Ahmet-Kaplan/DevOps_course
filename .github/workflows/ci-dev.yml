@@ -51,7 +51,7 @@ jobs:
       - name: Check out the code
         uses: actions/checkout@v7
 
-      - name: Set up Node.js 24 (same major as the node:24-alpine image)
+      - name: Set up Node.js 24 (same major as the node:24.21.0-alpine3.24 image)
         uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -125,7 +125,7 @@ jobs:
       # Silence a rule you consciously accept with a comment above the line:
       #     # hadolint ignore=DL3018
       - name: Lint app/${{ matrix.service }}/Dockerfile
-        uses: hadolint/hadolint-action@v3.1.0
+        uses: hadolint/hadolint-action@v3.5.0
         with:
           dockerfile: app/${{ matrix.service }}/Dockerfile
           failure-threshold: warning

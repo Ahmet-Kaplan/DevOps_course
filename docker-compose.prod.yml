@@ -29,7 +29,7 @@
 # Request path - Docker is the ONLY thing installed on the host; even the edge
 # web server (nginx) is a container:
 #
-#   browser --HTTP:80 / HTTPS:443--> proxy  (nginx:1.27-alpine; the ONLY service
+#   browser --HTTP:80 / HTTPS:443--> proxy  (nginx:1.30.5-alpine3.24; the ONLY service
 #                                     |      with published ports; terminates TLS
 #                                     |      from stage 3 on)
 #                                     |-- /api/ --> backend:3000   Express API
@@ -84,7 +84,7 @@ services:
   # db - PostgreSQL 17 (only reachable from the backend)
   # ---------------------------------------------------------------------------
   db:
-    image: postgres:17-alpine
+    image: postgres:17.11-alpine3.24
     <<: *hardening
     # Restart after crashes and after a server reboot (the Docker daemon starts
     # on boot), but NOT if you stopped it on purpose with `docker compose stop`.
@@ -247,7 +247,7 @@ services:
     # unprivileged image would force us to loosen the key permissions instead.
     # The root master never touches network traffic, and the container is
     # still locked down: read-only filesystem, no-new-privileges, cgroup limits.
-    image: nginx:1.27-alpine
+    image: nginx:1.30.5-alpine3.24
     <<: *hardening
     restart: unless-stopped
     # Start-up in two steps (replaces the image's ENTRYPOINT):

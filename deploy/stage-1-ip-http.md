@@ -178,9 +178,9 @@ You should see, after about a minute of downloads, `Container bugsquash-proxy-1 
 ```text
 NAME                   IMAGE                                      ...  STATUS                    PORTS
 bugsquash-backend-1    alhuraibisaeed/bugsquash-backend:latest    ...  Up 33 seconds (healthy)   3000/tcp
-bugsquash-db-1         postgres:17-alpine                         ...  Up 39 seconds (healthy)   5432/tcp
+bugsquash-db-1         postgres:17.11-alpine3.24                         ...  Up 39 seconds (healthy)   5432/tcp
 bugsquash-frontend-1   alhuraibisaeed/bugsquash-frontend:latest   ...  Up 27 seconds (healthy)   8080/tcp
-bugsquash-proxy-1      nginx:1.27-alpine                          ...  Up 27 seconds (healthy)   0.0.0.0:80->80/tcp, [::]:80->80/tcp, 0.0.0.0:443->443/tcp, [::]:443->443/tcp
+bugsquash-proxy-1      nginx:1.30.5-alpine3.24                          ...  Up 27 seconds (healthy)   0.0.0.0:80->80/tcp, [::]:80->80/tcp, 0.0.0.0:443->443/tcp, [::]:443->443/tcp
 ```
 
 All four are `healthy`, and only the proxy has `0.0.0.0:...` ports: it is the only way in.

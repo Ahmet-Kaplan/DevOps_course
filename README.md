@@ -67,10 +67,10 @@ one Compose file, so every moving part stays visible.
 | Layer | Technology | Where |
 |-------|------------|-------|
 | Frontend | Vite 8 multi-page app, vanilla JavaScript modules (no framework), ESLint 10 | [`app/frontend/`](app/frontend/) |
-| Frontend runtime | `nginxinc/nginx-unprivileged:1.27-alpine` (non-root, port 8080) | [`app/frontend/Dockerfile`](app/frontend/Dockerfile), [`app/frontend/nginx.conf`](app/frontend/nginx.conf) |
-| Backend | Node.js 24 (`node:24-alpine`), Express 5, `pg`, `bcryptjs`, `jsonwebtoken`, `helmet`, `express-rate-limit`, ESLint 9 | [`app/backend/`](app/backend/) |
-| Database | PostgreSQL 17 (`postgres:17-alpine`), schema created by the backend at startup | [`app/backend/src/db.js`](app/backend/src/db.js) |
-| Edge proxy | `nginx:1.27-alpine` container: reverse proxy, TLS, HTTP/2 | [`deploy/nginx/`](deploy/nginx/) |
+| Frontend runtime | `nginxinc/nginx-unprivileged:1.30.5-alpine3.24` (non-root, port 8080) | [`app/frontend/Dockerfile`](app/frontend/Dockerfile), [`app/frontend/nginx.conf`](app/frontend/nginx.conf) |
+| Backend | Node.js 24 (`node:24.21.0-alpine3.24`), Express 5, `pg`, `bcryptjs`, `jsonwebtoken`, `helmet`, `express-rate-limit`, ESLint 9 | [`app/backend/`](app/backend/) |
+| Database | PostgreSQL 17 (`postgres:17.11-alpine3.24`), schema created by the backend at startup | [`app/backend/src/db.js`](app/backend/src/db.js) |
+| Edge proxy | `nginx:1.30.5-alpine3.24` container: reverse proxy, TLS, HTTP/2 | [`deploy/nginx/`](deploy/nginx/) |
 | Certificates | Let's Encrypt through the `certbot/certbot` container, renewed by a systemd timer | [`deploy/tls.sh`](deploy/tls.sh), [`deploy/systemd/`](deploy/systemd/) |
 | Orchestration | Docker Compose: dev project `bugsquash-dev`, production project `bugsquash` | [`docker-compose.yml`](docker-compose.yml), [`docker-compose.prod.yml`](docker-compose.prod.yml) |
 | Tests | `node:test` unit tests (fake DB), zero-dependency integration tests using `fetch` | [`app/backend/test/`](app/backend/test/), [`tests/integration/`](tests/integration/) |
@@ -251,7 +251,7 @@ API_ONLY=1 BASE_URL=http://localhost:3000 node --test tests/integration/api.test
 
 # no Node on the host? (Linux) a throwaway container sharing the host's network namespace
 docker run --rm --network host -v "$PWD/tests:/tests:ro" -e BASE_URL=http://localhost:5173 \
-  node:24-alpine node --test /tests/integration/api.test.mjs
+  node:24.21.0-alpine3.24 node --test /tests/integration/api.test.mjs
 ```
 
 Each run makes 5 requests to the rate-limited auth endpoints (30 per 15 minutes per IP). On `429`,
@@ -489,7 +489,7 @@ flowchart LR
     FW{{"Google VPC firewall<br/>tcp 22, 80, 443"}}
     CF["Cloudflare DNS<br/>A record, grey cloud"]
     subgraph VM["VM devops: Debian 13, only Docker installed"]
-        PX["proxy<br/>nginx:1.27-alpine<br/>publishes :80 and :443"]
+        PX["proxy<br/>nginx:1.30.5-alpine3.24<br/>publishes :80 and :443"]
         FE["frontend<br/>nginx-unprivileged :8080"]
         BE["backend<br/>Express :3000"]
         DB[("db<br/>postgres 17 :5432")]
@@ -518,7 +518,7 @@ The same in plain text:
     v
  +- VM "devops": only Docker is installed -------------------------------------------+
  |                                                                                   |
- |  proxy  nginx:1.27-alpine, the ONLY container that publishes ports (80, 443)      |
+ |  proxy  nginx:1.30.5-alpine3.24, the ONLY container that publishes ports (80, 443)      |
  |    |-- /      --> frontend:8080  nginx-unprivileged, the built Vite pages         |
  |    '-- /api/  --> backend:3000   Express API                                      |
  |                     '--> db:5432  postgres 17, internal network "data"            |

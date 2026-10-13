@@ -407,7 +407,7 @@ PID   USER     TIME  COMMAND
 $ time docker stop sig-init               # -> took 0.13 s, ExitCode=143 (128 + 15 = SIGTERM)
 ```
 
-**The same thing happens with Node.js.** Captured with `node:24-alpine`:
+**The same thing happens with Node.js.** Captured with `node:24.21.0-alpine3.24`:
 
 | PID 1 program | `docker stop` took | Exit code |
 |---|---|---|
@@ -782,12 +782,12 @@ Also remember that **files written to a `tmpfs` live in RAM and are charged to t
 cgroup**, including our read-only containers' `/tmp`.
 
 **Runtimes read these files too.** Node.js sizes its V8 heap from the cgroup limit. Captured with
-`node:24-alpine`:
+`node:24.21.0-alpine3.24`:
 
 ```console
-$ docker run --rm node:24-alpine node -e "console.log(require('v8').getHeapStatistics().heap_size_limit/1048576)"
+$ docker run --rm node:24.21.0-alpine3.24 node -e "console.log(require('v8').getHeapStatistics().heap_size_limit/1048576)"
 4288                     <- no limit: sized from the host's 31 GB of RAM
-$ docker run --rm --memory 256m node:24-alpine node -e "console.log(require('v8').getHeapStatistics().heap_size_limit/1048576)"
+$ docker run --rm --memory 256m node:24.21.0-alpine3.24 node -e "console.log(require('v8').getHeapStatistics().heap_size_limit/1048576)"
 259                      <- sized from memory.max
 ```
 
@@ -907,7 +907,7 @@ to stack them:
 
 ```mermaid
 flowchart BT
-    L1["Layer 1: node:24-alpine base (read-only)"] --> L2["Layer 2: npm ci, node_modules (read-only)"]
+    L1["Layer 1: node:24.21.0-alpine3.24 base (read-only)"] --> L2["Layer 2: npm ci, node_modules (read-only)"]
     L2 --> L3["Layer 3: COPY src/ (read-only)"]
     L3 --> UP["Container layer: upperdir (read-write, deleted with the container)"]
     UP --> M["merged view = what the process sees as /"]
@@ -954,7 +954,7 @@ Metadata instructions (`ENV`, `CMD`, `EXPOSE`, `USER`, `STOPSIGNAL`) only change
 up as `0B` in `docker image history`:
 
 ```console
-$ docker image history --format 'table {{.CreatedBy}}\t{{.Size}}' postgres:17-alpine | head -6
+$ docker image history --format 'table {{.CreatedBy}}\t{{.Size}}' postgres:17.11-alpine3.24 | head -6
 CREATED BY                                      SIZE
 CMD ["postgres"]                                0B
 EXPOSE map[5432/tcp:{}]                         0B
@@ -999,7 +999,7 @@ result into a small final stage. Compilers, devDependencies and source maps neve
 | **Kernel** | Each VM boots its **own** kernel | **Shared host kernel** (proved in section 6) |
 | **Guest OS flexibility** | Any OS for the architecture: Linux, Windows, BSD | Same kernel *type* as the host (Linux containers need a Linux kernel); any distro userland |
 | **Start time** | Seconds to minutes (BIOS/UEFI, kernel, init); microVMs about 125 ms | Milliseconds (it is a `fork` + `exec`) |
-| **Image size** | GBs (full disk with OS) | MBs (captured): `alpine` **8.4 MB**, `nginx-unprivileged:1.27-alpine` 48 MB, `node:24-alpine` 171 MB |
+| **Image size** | GBs (full disk with OS) | MBs (captured): `alpine` **8.4 MB**, `nginx-unprivileged:1.30.5-alpine3.24` 48 MB, `node:24.21.0-alpine3.24` 171 MB |
 | **Memory overhead** | Guest kernel + OS services, RAM reserved per VM | Only the app's own memory; page cache and image layers are shared |
 | **Density** | Tens per host | Hundreds to thousands per host |
 | **CPU performance** | Near-native with hardware virtualization; some cost on I/O and exits | Native: syscalls go straight to the host kernel |
@@ -1256,7 +1256,7 @@ flowchart LR
     Browser(["Browser"])
     subgraph HOST["Google Compute Engine VM devops: one Debian 13 kernel shared by every container"]
         subgraph EDGE["network bugsquash_edge (bridge)"]
-            PX["proxy: nginx:1.27-alpine<br/>the only published ports, 80 + 443<br/>master root, workers nginx<br/>64M / 0.25 CPU, read-only"]
+            PX["proxy: nginx:1.30.5-alpine3.24<br/>the only published ports, 80 + 443<br/>master root, workers nginx<br/>64M / 0.25 CPU, read-only"]
             FE["frontend<br/>nginx-unprivileged, uid 101<br/>64M / 0.25 CPU, read-only"]
             BE["backend (also on data)<br/>node as PID 1, uid 1000<br/>256M / 0.50 CPU, read-only"]
         end
@@ -1359,7 +1359,7 @@ On every deploy (`deploy/deploy.sh` runs `docker compose up -d`), Compose stops 
 container: SIGTERM to **PID 1**, wait, then SIGKILL. Because of the PID-1 rules from 2.4:
 
 - the backend's Dockerfile uses the **exec form** `CMD ["node", "src/server.js"]`, so **`node` itself is
-  PID 1** (no `sh` or `npm` in between to swallow the signal). The `node:24-alpine` entrypoint script ends
+  PID 1** (no `sh` or `npm` in between to swallow the signal). The `node:24.21.0-alpine3.24` entrypoint script ends
   with `exec "$@"`, which *replaces* the shell, so Node still ends up as PID 1 (`process.pid` prints `1`);
 - `src/server.js` installs `SIGTERM`/`SIGINT` handlers that stop accepting connections, let in-flight
   requests finish, close the Postgres pool and exit. A plain Node process with no handler would wait the
@@ -1367,7 +1367,7 @@ container: SIGTERM to **PID 1**, wait, then SIGKILL. Because of the PID-1 rules 
 - the official images play the same game with `STOPSIGNAL`: Postgres uses **`SIGINT`** ("fast
   shutdown": checkpoint, then exit), and our compose file gives it `stop_grace_period: 30s`. Nginx images
   use **`SIGQUIT`** (graceful: finish open requests). Check with
-  `docker image inspect -f '{{.Config.StopSignal}}' postgres:17-alpine`;
+  `docker image inspect -f '{{.Config.StopSignal}}' postgres:17.11-alpine3.24`;
 - in **development** the command is a chain (`npm run dev` -> `node --watch` -> `node`), so
   `docker-compose.yml` sets `init: true` to put tini at PID 1 for signal forwarding and zombie reaping.
 
@@ -1388,7 +1388,7 @@ period, so a stuck shutdown still ends with the app's own exit rather than the k
 Docker does not create a user namespace by default, so **root in a container is UID 0 on the host**.
 We therefore keep root out of every process that handles requests:
 
-- backend: `USER 1000:1000`, the `node` user that already exists in `node:24-alpine`. It is written
+- backend: `USER 1000:1000`, the `node` user that already exists in `node:24.21.0-alpine3.24`. It is written
   numerically so tools can verify "non-root" without reading `/etc/passwd`. The app files stay owned by
   root, so the process can read its code but not rewrite it;
 - frontend: `nginxinc/nginx-unprivileged` runs as UID 101 and listens on **8080**;
@@ -1403,9 +1403,9 @@ We therefore keep root out of every process that handles requests:
   `NoNewPrivs: 1` (default `0`).
 
 ```console
-$ docker run --rm --user 1000:1000 node:24-alpine id
+$ docker run --rm --user 1000:1000 node:24.21.0-alpine3.24 id
 uid=1000(node) gid=1000(node) groups=1000(node)
-$ docker run --rm nginxinc/nginx-unprivileged:1.27-alpine id
+$ docker run --rm nginxinc/nginx-unprivileged:1.30.5-alpine3.24 id
 uid=101(nginx) gid=101(nginx) groups=101(nginx),101(nginx)
 $ docker compose -f docker-compose.prod.yml --env-file .env.prod exec proxy ps -o user,args   # on the VM
 USER     COMMAND

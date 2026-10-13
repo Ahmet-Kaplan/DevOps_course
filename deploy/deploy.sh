@@ -36,7 +36,7 @@
 #                    settings (${VAR:?...}) abort HERE, before anything changes.
 #   3. Pull        : download the new images. Only layers that changed are
 #                    transferred - image LAYERS are content-addressed, so the
-#                    node:24-alpine base layers are already on disk.
+#                    node:24.21.0-alpine3.24 base layers are already on disk.
 #   4. Up          : recreate only the containers whose image or config
 #                    changed, then WAIT until their healthchecks pass.
 #   5. Proxy config: re-render the edge proxy's site config from the templates
@@ -67,7 +67,7 @@
 #                  Example, on your laptop (from the repository root):
 #                    docker build --target production -t local/bugsquash-backend:ci app/backend
 #                    docker build --target production -t local/bugsquash-frontend:ci app/frontend
-#                    docker pull nginx:1.27-alpine && docker pull postgres:17-alpine
+#                    docker pull nginx:1.30.5-alpine3.24 && docker pull postgres:17.11-alpine3.24
 #                    # .env.prod with DOCKER_HUB_USERNAME=local, DOMAIN=localhost,
 #                    # COOKIE_SECURE=false and two `openssl rand -hex 32` secrets
 #                    SKIP_PULL=1 ./deploy/deploy.sh ci

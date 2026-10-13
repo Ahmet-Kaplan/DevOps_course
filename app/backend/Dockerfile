@@ -20,8 +20,10 @@
 # Stage "base": shared starting point for all other stages.
 # -----------------------------------------------------------------------------
 # Alpine is a ~5 MB distro (musl libc + busybox): smaller image, smaller attack
-# surface. We pin the Node major version (24 = current LTS line).
-FROM node:24-alpine AS base
+# surface. We pin the EXACT version: Node 24.21.0 (the current LTS line) on
+# Alpine 3.24. A floating tag such as "node:24-alpine" silently changes under
+# you; a pinned one changes only when we bump it on purpose (and CI re-tests).
+FROM node:24.21.0-alpine3.24 AS base
 WORKDIR /app
 # Containers are ephemeral: silence npm's "new version available" banner,
 # which would otherwise clutter `docker compose logs` on every start.
@@ -76,6 +78,15 @@ RUN --mount=type=cache,target=/root/.npm \
 # -----------------------------------------------------------------------------
 FROM base AS production
 ENV NODE_ENV=production
+
+# The running app needs only `node`. The package managers that ship with the
+# base image (npm, npx, corepack, yarn) are never used here (dependencies were
+# installed in the prod-deps stage), so delete them: less to attack, and every
+# vulnerability a scanner finds inside npm's own dependencies disappears with
+# it (Trivy on node:24.21.0-alpine3.24: 8 HIGH, all in npm -> 0 in this image).
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+           /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+           /opt/yarn-v* /usr/local/bin/yarn /usr/local/bin/yarnpkg
 
 # Take the already-installed node_modules from the prod-deps stage, then our
 # code. We copy only what runs: no tests, no lint config, no lockfile.

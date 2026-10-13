@@ -35,7 +35,7 @@ services:
   # ---------------------------------------------------------------------------
   db:
     # Official image, Alpine variant (much smaller than the Debian one).
-    image: postgres:17-alpine
+    image: postgres:17.11-alpine3.24
     environment:
       # Read by the image's entrypoint script on FIRST start (empty data dir)
       # to create the database and the superuser.

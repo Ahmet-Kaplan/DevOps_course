@@ -20,7 +20,7 @@
 # -----------------------------------------------------------------------------
 # Stage "dev": local development (docker compose up)
 # -----------------------------------------------------------------------------
-FROM node:24-alpine AS dev
+FROM node:24.21.0-alpine3.24 AS dev
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -52,7 +52,7 @@ CMD ["node", "node_modules/vite/bin/vite.js"]
 # build, even when producing an arm64 image on an amd64 CI runner. HTML/CSS/JS
 # are the same bytes on every CPU architecture, so there is no point compiling
 # them under (slow) QEMU emulation. Only the final nginx stage is per-platform.
-FROM --platform=$BUILDPLATFORM node:24-alpine AS build
+FROM --platform=$BUILDPLATFORM node:24.21.0-alpine3.24 AS build
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -76,7 +76,7 @@ RUN npm run build
 # -----------------------------------------------------------------------------
 # Stage "production" (final): nginx, non-root, static files only
 # -----------------------------------------------------------------------------
-FROM nginxinc/nginx-unprivileged:1.27-alpine AS production
+FROM nginxinc/nginx-unprivileged:1.30.5-alpine3.24 AS production
 
 ARG VITE_APP_VERSION=dev
 LABEL org.opencontainers.image.title="bugsquash-frontend" \

@@ -1,0 +1,154 @@
+# =============================================================================
+# CI - test branch: build the production images and test the REAL stack
+# -----------------------------------------------------------------------------
+# Branch flow:  dev --(PR)--> test --(PR)--> main (production)
+#
+# The second quality gate answers "do the containers work TOGETHER?":
+#   1. build the "production" Dockerfile targets (the exact images we ship);
+#   2. start them with the REAL docker-compose.prod.yml (same networks, limits,
+#      read-only filesystems, healthchecks as on the server);
+#   3. run tests/integration/api.test.mjs against http://localhost:8080
+#      (frontend nginx -> backend -> Postgres, the full request path);
+#   4. always tear everything down.
+# Nothing is pushed to Docker Hub from here - that is ci-main's job.
+# =============================================================================
+name: CI (test)
+
+on:
+  push:
+    branches: [test]
+  pull_request:
+    branches: [test]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: Build images & run integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24 (runs the zero-dependency test file)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # Buildx = the BuildKit-based builder. We use it for the GitHub Actions
+      # layer cache (type=gha): unchanged layers (e.g. `npm ci` when the
+      # lockfile did not change) are restored instead of rebuilt.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Image names follow the contract: ${DOCKER_HUB_USERNAME}/bugsquash-*:${IMAGE_TAG}
+      # With DOCKER_HUB_USERNAME=local and IMAGE_TAG=ci, the prod compose file
+      # resolves to exactly these local tags - no registry involved.
+      # `load: true` copies the built image into the runner's Docker daemon.
+      - name: Build backend image (production target)
+        uses: docker/build-push-action@v6
+        with:
+          context: app/backend
+          target: production
+          tags: local/bugsquash-backend:ci
+          load: true
+          push: false
+          build-args: |
+            APP_VERSION=ci-${{ github.sha }}
+          cache-from: type=gha,scope=ci-test-backend
+          cache-to: type=gha,mode=max,scope=ci-test-backend
+
+      - name: Build frontend image (production target)
+        uses: docker/build-push-action@v6
+        with:
+          context: app/frontend
+          target: production
+          tags: local/bugsquash-frontend:ci
+          load: true
+          push: false
+          build-args: |
+            VITE_APP_VERSION=ci-${{ github.sha }}
+          cache-from: type=gha,scope=ci-test-frontend
+          cache-to: type=gha,mode=max,scope=ci-test-frontend
+
+      # Security sanity check: a container running as root turns any app RCE
+      # into root inside the container (and one kernel bug away from the host).
+      # Both Dockerfiles promise a non-root USER; make the promise testable.
+      - name: Verify images do not run as root
+        run: |
+          for image in local/bugsquash-backend:ci local/bugsquash-frontend:ci; do
+            user="$(docker image inspect --format '{{.Config.User}}' "$image")"
+            echo "$image runs as user: '${user:-<unset = root>}'"
+            case "$user" in
+              "" | root | 0 | 0:* | root:*)
+                echo "::error::$image runs as root - add a non-root USER to its Dockerfile"
+                exit 1
+                ;;
+            esac
+          done
+
+      # Fresh random secrets on every run: even throwaway credentials should
+      # never be hard-coded in a public workflow file.
+      - name: Write throwaway .env.ci
+        run: |
+          {
+            echo "DOCKER_HUB_USERNAME=local"
+            echo "IMAGE_TAG=ci"
+            echo "POSTGRES_DB=bugsquash"
+            echo "POSTGRES_USER=bugsquash"
+            echo "POSTGRES_PASSWORD=$(openssl rand -hex 32)"
+            echo "JWT_SECRET=$(openssl rand -hex 32)"
+          } > .env.ci
+
+      # Same command shape as deploy.sh on the server, only the env file differs
+      # (.env.ci here, .env.prod there). Every compose call below repeats
+      # `-f ... --env-file ...` because Compose needs the variables to even
+      # parse the file - including for `ps`, `logs` and `down`.
+      #
+      # --wait blocks until every service is "running" AND "healthy" (that is
+      # what the healthchecks in the compose file are for) and fails if one
+      # turns unhealthy or the timeout expires. No fragile `sleep 30`!
+      - name: Start the production stack
+        run: docker compose -f docker-compose.prod.yml --env-file .env.ci up -d --wait --wait-timeout 180
+
+      - name: Show running containers
+        run: docker compose -f docker-compose.prod.yml --env-file .env.ci ps
+
+      - name: Run integration tests
+        env:
+          BASE_URL: http://localhost:8080
+        run: node --test tests/integration/api.test.mjs
+
+      # Also exercise the backend's own published port (what the host nginx
+      # proxies /api/ to in production) and the frontend's health endpoint.
+      - name: Smoke-test published ports
+        run: |
+          curl --fail --silent --show-error http://127.0.0.1:3000/api/health
+          echo
+          curl --fail --silent --show-error http://127.0.0.1:8080/healthz
+          echo
+
+      # Only runs when an earlier step failed: the logs are what you need to
+      # debug a red build (crash on startup, failed healthcheck, nginx error).
+      - name: Dump container state and logs
+        if: failure()
+        run: |
+          docker compose -f docker-compose.prod.yml --env-file .env.ci ps -a || true
+          docker compose -f docker-compose.prod.yml --env-file .env.ci logs --no-color --timestamps || true
+
+      # `always()` = run even if the tests failed or the job was cancelled.
+      # -v also removes the database volume: every run starts from scratch.
+      - name: Tear down
+        if: always()
+        run: |
+          if [ -f .env.ci ]; then
+            docker compose -f docker-compose.prod.yml --env-file .env.ci down -v --remove-orphans
+            rm -f .env.ci
+          fi

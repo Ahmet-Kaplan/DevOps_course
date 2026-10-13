@@ -1,0 +1,175 @@
+# =============================================================================
+# CI - dev branch: fast feedback on every push / pull request
+# -----------------------------------------------------------------------------
+# Branch flow:  dev --(PR)--> test --(PR)--> main (production)
+#
+# This is the FIRST quality gate. It does not build or run containers; it runs
+# the cheap, fast checks that catch most mistakes in a minute or two:
+#   * backend:     ESLint + unit tests
+#   * frontend:    ESLint + production build (vite build)
+#   * dockerfiles: hadolint (Dockerfile best-practice linter)
+#   * static:      shellcheck on the deploy script, `docker compose config`
+#                  on both compose files, syntax check of the integration tests
+# The jobs are independent, so GitHub runs them IN PARALLEL on separate VMs.
+# =============================================================================
+name: CI (dev)
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+  # Adds a "Run workflow" button in the Actions tab.
+  workflow_dispatch:
+
+# Least privilege: the automatic GITHUB_TOKEN may only READ the repository.
+# Each job could widen this, none needs to.
+permissions:
+  contents: read
+
+# A newer push to the same branch/PR cancels the outdated run - saves runner
+# minutes and you only care about the latest commit anyway.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  backend:
+    name: Backend - lint & unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        # Every `run:` step in this job starts in app/backend.
+        working-directory: app/backend
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24 (same major as the node:24-alpine image)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          # Caches ~/.npm keyed on the lockfile hash: a later `npm ci` with an
+          # unchanged lockfile downloads nothing.
+          cache: npm
+          cache-dependency-path: app/backend/package-lock.json
+
+      # `npm ci` (not `npm install`): installs EXACTLY what package-lock.json
+      # says and fails if package.json and the lockfile disagree.
+      # Reproducible builds start here.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+  # ---------------------------------------------------------------------------
+  frontend:
+    name: Frontend - lint & build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: app/frontend
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      # Proves the multi-page Vite build works (missing imports, broken HTML
+      # entry points...) long before an image is built.
+      - name: Production build
+        run: npm run build
+        env:
+          VITE_APP_VERSION: ci-${{ github.sha }}
+
+  # ---------------------------------------------------------------------------
+  dockerfiles:
+    name: Hadolint - ${{ matrix.service }} Dockerfile
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      # Report problems in BOTH Dockerfiles, not just the first failing one.
+      fail-fast: false
+      # A matrix runs the same job once per value: here, once per service.
+      matrix:
+        service: [backend, frontend]
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      # hadolint parses the Dockerfile and runs shellcheck on every RUN line.
+      # It flags e.g. unpinned base images, `apt-get` without cleanup,
+      # missing USER, `cd` instead of WORKDIR...
+      # Silence a rule you consciously accept with a comment above the line:
+      #     # hadolint ignore=DL3018
+      - name: Lint app/${{ matrix.service }}/Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: app/${{ matrix.service }}/Dockerfile
+          failure-threshold: warning
+
+  # ---------------------------------------------------------------------------
+  static-checks:
+    name: Shellcheck & compose validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      # shellcheck is preinstalled on GitHub's ubuntu runners. It catches the
+      # classic bash bugs: unquoted variables, word splitting, `cd` without
+      # error handling, useless use of cat...
+      - name: Shellcheck deploy script
+        run: |
+          shellcheck --version
+          shellcheck deploy/deploy.sh
+
+      # `config` parses the file, validates it against the Compose spec and
+      # resolves every ${VARIABLE}. -q = print nothing, just set the exit code.
+      - name: Validate docker-compose.yml (dev)
+        run: docker compose -f docker-compose.yml config -q
+
+      # The prod file uses ${VAR:?error} for secrets, so it needs values.
+      # Dummy ones are fine: we validate structure, we never start anything.
+      # RUNNER_TEMP is a per-job temp dir outside the repo checkout.
+      - name: Validate docker-compose.prod.yml (with dummy secrets)
+        run: |
+          dummy_env="$RUNNER_TEMP/prod.env"
+          {
+            echo "DOCKER_HUB_USERNAME=ci-dummy"
+            echo "POSTGRES_PASSWORD=dummy-password"
+            echo "JWT_SECRET=dummy-secret"
+          } > "$dummy_env"
+          docker compose -f docker-compose.prod.yml --env-file "$dummy_env" config -q
+
+      # A negative test: the ${VAR:?} guards must actually stop a deploy that
+      # forgot its secrets. If `config` SUCCEEDS without them, that is a bug.
+      - name: Ensure prod compose refuses to run without secrets
+        run: |
+          if docker compose -f docker-compose.prod.yml --env-file /dev/null config -q 2>/dev/null; then
+            echo "::error file=docker-compose.prod.yml::config succeeded without POSTGRES_PASSWORD/JWT_SECRET - the :? guards are missing"
+            exit 1
+          fi
+          echo "OK - compose refuses to start without the required secrets"
+
+      - name: Syntax-check integration tests
+        run: node --check tests/integration/api.test.mjs

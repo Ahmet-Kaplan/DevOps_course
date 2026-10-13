@@ -1,0 +1,198 @@
+# =============================================================================
+# CD - main branch: build multi-arch images, push to Docker Hub, (deploy)
+# -----------------------------------------------------------------------------
+# Branch flow:  dev --(PR)--> test --(PR)--> main (production)
+#
+# Code only reaches main after passing ci-dev and ci-test, so this workflow
+# just PACKAGES and SHIPS it:
+#   build  : one job per service (matrix), each pushes
+#              <user>/bugsquash-<service>:latest
+#              <user>/bugsquash-<service>:sha-<7-char commit>   (immutable)
+#            for linux/amd64 AND linux/arm64 - Hetzner sells both x86 and
+#            Ampere ARM servers, and one multi-arch tag serves both: Docker
+#            pulls the matching variant automatically.
+#   deploy : OPTIONAL. Runs only if the repository variable
+#            ENABLE_AUTO_DEPLOY is "true". SSHes into the server and runs
+#            deploy/deploy.sh with the exact sha-<short> tag just built.
+#
+# Required repository SECRETS (Settings -> Secrets and variables -> Actions):
+#   DOCKER_HUB_USERNAME       Docker Hub account name
+#   DOCKER_HUB_ACCESS_TOKEN   Docker Hub access token (Account settings ->
+#                             Personal access tokens, scope Read & Write).
+#                             Never use your account password.
+# Only for auto-deploy:
+#   HETZNER_HOST              server IP or hostname
+#   HETZNER_USER              SSH user on the server (member of the docker group)
+#   HETZNER_SSH_KEY           PRIVATE key of a dedicated deploy key pair
+#   HETZNER_KNOWN_HOSTS       (optional, recommended) output of
+#                             `ssh-keyscan <server>` checked by hand once
+# Repository VARIABLES (not secret):
+#   ENABLE_AUTO_DEPLOY        "true" to enable the deploy job
+#   DEPLOY_PATH               (optional) repo path on the server,
+#                             default /opt/devops-workshop
+# =============================================================================
+name: CD (main)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Releases are queued, never cancelled half-way: cancelling a run in the
+# middle of a push or a deploy could leave the server in a mixed state.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build & push ${{ matrix.service }}
+    # workflow_dispatch lets you pick ANY branch in the UI. Only main may
+    # publish the "latest" tag that production pulls.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # Same steps, two services. `version_arg` is the build argument each
+        # Dockerfile uses to bake the version into the image.
+        include:
+          - service: backend
+            version_arg: APP_VERSION
+          - service: frontend
+            version_arg: VITE_APP_VERSION
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      # ${GITHUB_SHA::7} is bash substring syntax: first 7 characters of the
+      # commit SHA - the same length metadata-action uses for sha-<short>.
+      - name: Compute short commit SHA
+        id: vars
+        run: echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      # QEMU lets this x86 runner EMULATE arm64 CPUs, so RUN steps of the
+      # arm64 image (e.g. `npm ci`) can execute. Slower than native, but no
+      # ARM runner needed.
+      - name: Set up QEMU (arm64 emulation)
+        uses: docker/setup-qemu-action@v3
+
+      # Buildx (BuildKit) can build several platforms in one go and push them
+      # as a single multi-arch "manifest list".
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+
+      # Generates tags and OCI labels (source repo URL, commit, build date) in
+      # one consistent place. Note: because the image name contains a secret,
+      # GitHub masks it as *** in the logs - that is expected.
+      - name: Compute image tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKER_HUB_USERNAME }}/bugsquash-${{ matrix.service }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-,format=short
+
+      - name: Build and push (linux/amd64 + linux/arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: app/${{ matrix.service }}
+          target: production
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Shown in the page footer / GET /api/health, so you can SEE which
+          # commit is live after a deploy.
+          build-args: |
+            ${{ matrix.version_arg }}=${{ steps.vars.outputs.short_sha }}
+          # Layer cache in the GitHub Actions cache service, one scope per
+          # service so backend and frontend do not evict each other's layers.
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: Summary
+        run: |
+          {
+            echo "### ${{ matrix.service }} image pushed"
+            echo
+            echo "Tags: \`latest\`, \`sha-${{ steps.vars.outputs.short_sha }}\` (linux/amd64, linux/arm64)"
+            echo
+            echo "Deploy manually on the server with: \`./deploy/deploy.sh sha-${{ steps.vars.outputs.short_sha }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy to Hetzner
+    # `needs` = wait until BOTH matrix legs of `build` succeeded.
+    needs: build
+    # Opt-in switch, so the repo works for students who have no server yet.
+    if: vars.ENABLE_AUTO_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # A GitHub "environment" shows deployments in the UI and can require a
+    # manual approval (Settings -> Environments -> production -> reviewers).
+    environment:
+      name: production
+      url: https://devops.gulfheight.com
+    steps:
+      # Plain OpenSSH, no third-party action: fewer supply-chain risks and
+      # nothing magic - it is exactly what you would type in a terminal.
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+          SSH_HOST: ${{ secrets.HETZNER_HOST }}
+          KNOWN_HOSTS: ${{ secrets.HETZNER_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          # Secrets reach the script through env vars, not by pasting an
+          # expression into the script text: an expression is substituted
+          # BEFORE bash parses the script, which enables script injection.
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          if [ -n "$KNOWN_HOSTS" ]; then
+            # Best: the server's host key was verified once by a human.
+            printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            # Fallback: trust-on-first-use. Vulnerable to a man-in-the-middle
+            # on this very connection, hence the warning.
+            echo "::warning::HETZNER_KNOWN_HOSTS secret not set - trusting the host key via ssh-keyscan"
+            ssh-keyscan -T 15 -H "$SSH_HOST" > ~/.ssh/known_hosts
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      # On the server: fast-forward the checkout (deploy.sh and the compose
+      # file live in the repo) and deploy the IMMUTABLE tag of this commit,
+      # not "latest" - so a rollback is just `./deploy/deploy.sh sha-<older>`.
+      - name: Run deploy script on the server
+        env:
+          SSH_HOST: ${{ secrets.HETZNER_HOST }}
+          SSH_USER: ${{ secrets.HETZNER_USER }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+        run: |
+          image_tag="sha-${GITHUB_SHA::7}"
+          remote_cmd="cd ${DEPLOY_PATH:-/opt/devops-workshop} && git pull --ff-only && ./deploy/deploy.sh ${image_tag}"
+          echo "Running on ${SSH_USER}@server: ${remote_cmd}"
+          ssh -i ~/.ssh/deploy_key \
+              -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=15 \
+              "${SSH_USER}@${SSH_HOST}" "${remote_cmd}"
+
+      - name: Verify the public site
+        run: |
+          curl --fail --silent --show-error --retry 5 --retry-delay 5 --retry-all-errors \
+            https://devops.gulfheight.com/api/health
+          echo

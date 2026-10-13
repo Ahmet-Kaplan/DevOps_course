@@ -1,0 +1,24 @@
+# Everything listed here is NOT sent to the Docker daemon as build context.
+# A smaller context = faster builds, and secrets never end up in an image.
+
+# Dependencies are installed INSIDE the image with `npm ci`. A host
+# node_modules may contain binaries built for another OS/libc (glibc vs
+# Alpine's musl) and would overwrite the clean install if copied.
+node_modules
+npm-debug.log*
+
+# Secrets and local environment files must never be baked into an image
+# (anyone who can pull the image could read them with `docker history`/`cp`).
+.env
+.env.*
+
+# Build/editor/VCS clutter.
+.git
+coverage
+.DS_Store
+.vscode
+.idea
+
+# The Dockerfile itself is not needed inside the image.
+Dockerfile
+.dockerignore

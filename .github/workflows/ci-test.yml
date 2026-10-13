@@ -128,6 +128,13 @@ jobs:
           } > .env.prod
           chmod 600 .env.prod
 
+      # SKIP_PULL=1 below never pulls, so our freshly built local/* images are
+      # the ones that run. The public images in the compose file (nginx,
+      # postgres) still have to come from Docker Hub once: a fresh runner has
+      # none of them. `config --images` lists exactly the pinned tags.
+      - name: Pull the public images (nginx, postgres)
+        run: $COMPOSE config --images | grep -v '^local/' | xargs -r -n1 docker pull --quiet
+
       # The REAL deploy script, in rehearsal mode: SKIP_PULL=1 uses the images
       # built above instead of pulling from Docker Hub. It runs `up -d --wait`
       # (every healthcheck must pass), reloads the proxy config and smoke-tests

@@ -130,7 +130,7 @@ You should see:
 
 ```text
 proxy-1  | select-site-config: no certificate for devops.gulfheight.com yet - using the HTTP-only site config (app + ACME challenges on port 80)
-{"status":"ok","db":"up","version":"afbdec7","uptime":95}
+{"status":"ok","version":"afbdec7"}
 ```
 
 Open **`http://devops.gulfheight.com`** in your browser: the same game with the same players, because

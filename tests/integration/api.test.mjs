@@ -200,14 +200,15 @@ describe(`Bug Squash Arena @ ${BASE_URL}`, () => {
 
   // ---- Infrastructure --------------------------------------------------------
 
-  it('GET /api/health reports the API and database as up', async () => {
+  it('GET /api/health is ok and reveals nothing but the version', async () => {
     const res = await request('GET', '/api/health');
+    // 200 already proves the backend can query Postgres (it returns 503 if not).
     assert.equal(res.status, 200, `health endpoint should be 200. ${describeResponse(res)}`);
     assert.ok(res.json, `health endpoint should return JSON. ${describeResponse(res)}`);
     assert.equal(res.json.status, 'ok');
-    assert.equal(res.json.db, 'up', 'backend must be able to query Postgres');
     assert.equal(typeof res.json.version, 'string', 'health must expose the deployed version');
-    assert.equal(typeof res.json.uptime, 'number', 'health must expose uptime in seconds');
+    assert.deepEqual(Object.keys(res.json).sort(), ['status', 'version'],
+      'the public health endpoint must not leak internals such as database status or uptime');
   });
 
   // Skipped only when you EXPLICITLY say BASE_URL is the bare API (API_ONLY=1),

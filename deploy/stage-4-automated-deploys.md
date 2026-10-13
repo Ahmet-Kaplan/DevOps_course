@@ -37,10 +37,10 @@ smoke tests among them, and finally:
 
 ```text
 ==> [6/8] Smoke tests (inside each container, then through the proxy)
-  [ok] backend  health : backend http://127.0.0.1:3000/api/health -> {"status":"ok","db":"up","version":"afbdec7",...}
+  [ok] backend  health : backend http://127.0.0.1:3000/api/health -> {"status":"ok","version":"afbdec7"}
   ...
   [ok] http -> https   -> 301 https://devops.gulfheight.com/
-  [ok] https api        -> {"status":"ok","db":"up","version":"afbdec7",...}
+  [ok] https api        -> {"status":"ok","version":"afbdec7"}
   [ok] https page       -> HTTP 200, HTTP/2
 ...
 Deploy finished in 9s. Live at https://devops.gulfheight.com (proxy mode: https)

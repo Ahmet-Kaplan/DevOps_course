@@ -197,8 +197,9 @@ Why: prove it works from the outside, exactly like a visitor.
 laptop$ curl http://<VM-IP>/api/health
 ```
 
-You should see: `{"status":"ok","db":"up","version":"afbdec7","uptime":44}`, where `version` is the
-commit that CI built. Now open **`http://<VM-IP>`** in your browser: sign up, squash some bugs and
+You should see: `{"status":"ok","version":"afbdec7"}`, where `version` is the commit that CI built.
+`ok` also means the backend could talk to the database, yet the database itself stays private: the
+answer is kept this short on purpose, because anyone on the internet can call it. Now open **`http://<VM-IP>`** in your browser: sign up, squash some bugs and
 check the leaderboard. The page footer shows the same version.
 
 ## 9. Explore

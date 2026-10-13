@@ -61,10 +61,11 @@ async function showApiVersion(valueNode, stateNode) {
     setState('up', 'healthy');
   } catch (error) {
     // A 503 from /api/health still carries the version: the API is running but
-    // its database is not. That distinction matters when debugging a deploy.
+    // something behind it (usually the database) is not. The endpoint does not
+    // say what, on purpose; operators read the reason in `docker compose logs`.
     if (error instanceof ApiError && error.data?.version) {
       valueNode.textContent = error.data.version;
-      setState('degraded', error.data.db === 'down' ? 'database down' : 'degraded');
+      setState('degraded', 'degraded');
     } else {
       valueNode.textContent = 'unreachable';
       setState('down', 'offline');

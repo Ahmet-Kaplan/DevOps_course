@@ -133,7 +133,7 @@ through the proxy. The second run is the proof. At its end you should see:
 TASK [app : Show the answer] ***************************************************
 ok: [devops] =>
   msg:
-  - '{"status":"ok","db":"up","version":"afbdec7","uptime":42}'
+  - '{"status":"ok","version":"afbdec7"}'
   - https://devops.gulfheight.com/api/health -> HTTP 200
 
 PLAY RECAP *********************************************************************

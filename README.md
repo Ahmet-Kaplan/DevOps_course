@@ -184,7 +184,7 @@ CORS configuration is needed.
 
 ```bash
 curl -s http://localhost:3000/api/health; echo
-# {"status":"ok","db":"up","version":"dev","uptime":12}
+# {"status":"ok","version":"dev"}
 ```
 
 To override a default, `cp .env.example .env` (git-ignored) and edit it, for example
@@ -612,7 +612,7 @@ A few symptoms that can appear in any stage:
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
 | **502 Bad Gateway** from nginx | backend or frontend down or still starting | `dc ps`, `dc logs --tail=100 backend proxy` (the `dc` alias from 5.5) |
-| `/api/health` returns **503** `"db":"down"` | Postgres unhealthy, or `POSTGRES_PASSWORD` no longer matches the volume | `dc logs db`; after changing the password, also run `ALTER USER` in psql |
+| `/api/health` returns **503** `{"status":"error"}` | the backend cannot reach Postgres: it is unhealthy, or `POSTGRES_PASSWORD` no longer matches the volume | `dc logs backend db` (the reason is logged there, never shown publicly); after changing the password, also run `ALTER USER` in psql |
 | Login does not stick (you bounce back to the login page) | `COOKIE_SECURE=true` while the site is still plain HTTP | `COOKIE_SECURE=false` until Stage 3 ([Stage 1, step 5](deploy/stage-1-ip-http.md#5-create-envprod-on-your-laptop)) |
 | `pull access denied` or `manifest unknown` | wrong `DOCKER_HUB_USERNAME`, or that tag was never pushed | check the tags on Docker Hub |
 | `exec format error` | image built for another CPU (for example pushed by hand from a laptop) | let CD (main) build it: it builds amd64 and arm64 |
@@ -625,7 +625,7 @@ All requests and responses are JSON; errors look like `{"error": "<message>"}`. 
 
 | Method | Path | Auth | Request body | Success | Errors |
 |--------|------|------|--------------|---------|--------|
-| `GET` | `/api/health` | none | | `200 {"status":"ok","db":"up","version":"<APP_VERSION>","uptime":<seconds>}` | `503 {"status":"error","db":"down",...}` |
+| `GET` | `/api/health` | none | | `200 {"status":"ok","version":"<APP_VERSION>"}` (200 means the database answered too) | `503 {"status":"error","version":"<APP_VERSION>"}` (reason only in `docker compose logs backend`) |
 | `POST` | `/api/auth/signup` | none, rate-limited | `{"username","password"}` | `201 {"user":{"id","username"}}` + `Set-Cookie` | `400` invalid input, `409` username taken, `429` |
 | `POST` | `/api/auth/login` | none, rate-limited | `{"username","password"}` | `200 {"user":{"id","username"}}` + `Set-Cookie` | `400` missing fields, `401 {"error":"Invalid username or password"}`, `429` |
 | `POST` | `/api/auth/logout` | none | | `204`, cookie cleared | |

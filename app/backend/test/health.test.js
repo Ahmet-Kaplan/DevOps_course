@@ -12,23 +12,22 @@ describe('GET /api/health and generic app behaviour', () => {
   });
   after(() => t.close());
 
-  it('returns 200 with status, db, version and uptime when the DB is up', async () => {
+  it('returns 200 with only status and version when the DB is up', async () => {
     const res = await t.request('GET', '/api/health');
     assert.equal(res.status, 200);
-    assert.equal(res.body.status, 'ok');
-    assert.equal(res.body.db, 'up');
-    assert.equal(res.body.version, 'test-1.2.3');
-    assert.ok(Number.isInteger(res.body.uptime) && res.body.uptime >= 0);
+    // The endpoint is public: it must not reveal internals (database, uptime).
+    assert.deepEqual(res.body, { status: 'ok', version: 'test-1.2.3' });
   });
 
-  it('returns 503 when the DB is down', async () => {
+  it('returns 503 without revealing why when the DB is down', async (ctx) => {
     t.db.state.healthy = false;
+    // The reason is logged for operators; silence it in the test output.
+    ctx.mock.method(console, 'error', () => {});
     try {
       const res = await t.request('GET', '/api/health');
       assert.equal(res.status, 503);
-      assert.equal(res.body.status, 'error');
-      assert.equal(res.body.db, 'down');
-      assert.equal(res.body.version, 'test-1.2.3');
+      assert.deepEqual(res.body, { status: 'error', version: 'test-1.2.3' });
+      assert.equal(console.error.mock.callCount(), 1, 'the reason must be logged server-side');
     } finally {
       t.db.state.healthy = true;
     }

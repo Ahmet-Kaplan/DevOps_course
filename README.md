@@ -1,5 +1,7 @@
 # Zero-to-Hero DevOps Workshop: Bug Squash Arena
 
+![What we'll build: code goes from your laptop through GitHub, GitHub Actions and Docker Hub to a Google Cloud VM, where Docker runs the nginx proxy, frontend, backend, PostgreSQL and certbot; visitors find it through Cloudflare DNS and connect over HTTPS. Pink badges mark the five deployment stages.](docs/images/architecture-overview.svg)
+
 <!-- Forked this repository? Replace "Mohammed-Alhuraibi/DevOps_course" in the three badge URLs below. -->
 [![CI (dev)](https://github.com/Mohammed-Alhuraibi/DevOps_course/actions/workflows/ci-dev.yml/badge.svg?branch=dev)](https://github.com/Mohammed-Alhuraibi/DevOps_course/actions/workflows/ci-dev.yml)
 [![CI (test)](https://github.com/Mohammed-Alhuraibi/DevOps_course/actions/workflows/ci-test.yml/badge.svg?branch=test)](https://github.com/Mohammed-Alhuraibi/DevOps_course/actions/workflows/ci-test.yml)

@@ -2,22 +2,13 @@
 
 [README](../README.md) · **Stage 1** · [Stage 2](stage-2-domain-http.md) · [Stage 3](stage-3-https.md) · [Stage 4](stage-4-automated-deploys.md) · [Stage 5](../ansible/README.md)
 
+![Stage 1: copy three files to a Google Cloud VM with scp, pull the images from Docker Hub, and open the game at the VM's IP address](../docs/images/stage-1.svg)
+
 Bug Squash Arena already runs on your laptop. Now it moves to a real server: you rent a small
 virtual machine (VM) on Google Cloud, install Docker on it, copy three things over from your laptop
 and start the same containers there. No domain name and no HTTPS yet: you visit the VM by its IP address.
 
 **By the end:** `http://<VM-IP>` shows the game, and you can sign up and play.
-
-```text
-  laptop                                    VM "devops" on Google Cloud            (NEW)
- +-------------------------+    scp     +------------------------------------------+
- | docker-compose.prod.yml | ---------> | /opt/devops-workshop                     |
- | .env.prod               |            |   proxy :80 --> frontend, backend        |
- | deploy/nginx/           |            |                 backend --> db           |
- +-------------------------+            +------------------------------------------+
-                                                      ^
- browser --------------- http://<VM-IP> --------------'
-```
 
 Placeholders: `<VM-IP>` is your VM's external IP address (the instructor's is `34.118.95.243`) and
 `<you>` is your user name on the VM. Every command starts with **`laptop$`** (a terminal on your

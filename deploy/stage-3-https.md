@@ -2,6 +2,8 @@
 
 [README](../README.md) · [Stage 1](stage-1-ip-http.md) · [Stage 2](stage-2-domain-http.md) · **Stage 3** · [Stage 4](stage-4-automated-deploys.md) · [Stage 5](../ansible/README.md)
 
+![Stage 3: certbot gets a free Let's Encrypt certificate, the proxy serves HTTPS on port 443 and renews it twice a day](../docs/images/stage-3.svg)
+
 The site has a name, but everything still travels as readable text and the browser says *Not
 secure*. Now you ask Let's Encrypt for a free certificate, proving that you control
 `devops.gulfheight.com`, and the proxy switches itself to HTTPS. Nothing new is installed on the VM:
@@ -9,15 +11,6 @@ certbot, the Let's Encrypt client, runs as a one-off container.
 
 **By the end:** `https://devops.gulfheight.com` shows a padlock, every `http://` address redirects
 there, and the certificate renews itself.
-
-```text
- [certbot]  1. "a certificate for devops.gulfheight.com, please"  -->  [Let's Encrypt]
- one-off container (NEW)                                                    |
-     | writes a token file into a volume shared with the proxy              | 2. GET http://devops.gulfheight.com
-     v                                                                      |    /.well-known/acme-challenge/<token>
- [proxy :80 and :443 (NEW)]  <----------------------------------------------'
-     3. certificate lands in the "letsencrypt" volume; restart -> HTTPS
-```
 
 Same conventions as in [Stage 1](stage-1-ip-http.md): `laptop$` or `vm$` shows where a command runs.
 Before you start, `dig +short devops.gulfheight.com @1.1.1.1` must print your VM's IP

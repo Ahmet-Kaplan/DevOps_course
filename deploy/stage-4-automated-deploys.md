@@ -2,20 +2,14 @@
 
 [README](../README.md) · [Stage 1](stage-1-ip-http.md) · [Stage 2](stage-2-domain-http.md) · [Stage 3](stage-3-https.md) · **Stage 4** · [Stage 5](../ansible/README.md)
 
+![Stage 4: git push to main makes GitHub Actions build and push the images, then deploy them to the VM over SSH](../docs/images/stage-4.svg)
+
 The site is live on HTTPS, but every release still means copying files and typing Compose commands
 by hand. In this stage one script does a whole deploy and checks its own work, a dedicated `deploy`
 account owns the app on the VM, and GitHub Actions runs the script after every merge into `main`.
 
 **By the end:** merging into `main` puts the new version on `https://devops.gulfheight.com` (the
 footer shows its commit), and `./deploy/deploy.sh sha-<commit>` rolls back in one command.
-
-```text
- merge into main --> [GitHub Actions] --docker push--> [Docker Hub]
-                       |  (NEW) rsync the bundle,              |
-                       |  ssh "./deploy/deploy.sh sha-xxxxxxx" | docker compose pull
-                       v                                       |
-                     [VM: user "deploy", /opt/devops-workshop] <'
-```
 
 Same conventions as in [Stage 1](stage-1-ip-http.md). You need Stage 3 finished and the Docker Hub
 secrets from [README Part 4](../README.md#part-4-github-actions-and-secrets), because CI builds the images.

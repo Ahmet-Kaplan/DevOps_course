@@ -2,21 +2,13 @@
 
 [README](../README.md) · [Stage 1](stage-1-ip-http.md) · **Stage 2** · [Stage 3](stage-3-https.md) · [Stage 4](stage-4-automated-deploys.md) · [Stage 5](../ansible/README.md)
 
+![Stage 2: a Cloudflare DNS record points devops.gulfheight.com at the VM, still over HTTP](../docs/images/stage-2.svg)
+
 Your game is online, but `http://34.118.95.243` is not something you put on a poster. In this stage
 you add one DNS record so that `devops.gulfheight.com` leads to the VM, and you tell the proxy its
 new name. It stays plain HTTP for now: the name has to work before Stage 3 can get a certificate for it.
 
 **By the end:** `http://devops.gulfheight.com` shows the game (and `http://<VM-IP>` still works).
-
-```text
-            1. "devops.gulfheight.com?"
- browser  ------------------------------>  Cloudflare DNS          (NEW: one A record)
-          <------------------------------  "34.118.95.243"
-    |
-    |       2. http://devops.gulfheight.com
-    '------------------------------------>  VM: proxy :80  -->  app containers
-                                            (NEW: knows its name, DOMAIN)
-```
 
 Same conventions as in [Stage 1](stage-1-ip-http.md): `laptop$` or `vm$` shows where a command runs,
 `<VM-IP>` is your VM's static external IP and `<you>` your user name on the VM.

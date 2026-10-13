@@ -2,6 +2,8 @@
 
 [README](../README.md) · [Stage 1](../deploy/stage-1-ip-http.md) · [Stage 2](../deploy/stage-2-domain-http.md) · [Stage 3](../deploy/stage-3-https.md) · [Stage 4](../deploy/stage-4-automated-deploys.md) · **Stage 5** · [Google Cloud reference](../deploy/gcp-vm-setup.md)
 
+![Stage 5: Ansible on the laptop builds or rebuilds the whole VM in one command, with an encrypted vault and backups](../docs/images/stage-5.svg)
+
 Your server works, but the recipe for it lives in your memory and in a long scroll of terminal
 history. If the VM died tonight, you would retype Stages 1 to 4 under pressure. In this stage Ansible
 writes those steps down as code, so deleting the VM stops being scary.
@@ -9,15 +11,6 @@ writes those steps down as code, so deleting the VM stops being scary.
 **By the end:** you delete the VM, create a new one with the same IP, run
 `./ansible/provision.sh --new-vm`, and `https://devops.gulfheight.com` is back with its players,
 scores and certificate. You type no `vm$` command at all.
-
-```text
- laptop                                           VM "devops" (disposable)
- +------------------------------+  provision.sh  +-------------------------------+
- | ansible/  the recipe  (NEW)  | -------------> | Docker, user deploy, timer    |
- | secrets/vault.yml   (locked) |  SSH + sudo    | bundle, .env.prod, the stack  |
- | backups/<domain>/   (locked) | <------------- | database + certificate        |
- +------------------------------+   backup.yml   +-------------------------------+
-```
 
 Same conventions as in [Stage 1](../deploy/stage-1-ip-http.md), but every command here is `laptop$`,
 run from the repository root. Ansible logs in over SSH as `<you>` and uses `sudo` on the VM for you.

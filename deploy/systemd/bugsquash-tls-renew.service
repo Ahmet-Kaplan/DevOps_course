@@ -1,0 +1,69 @@
+# =============================================================================
+# bugsquash-tls-renew.service - renew the Let's Encrypt certificate (if due)
+# -----------------------------------------------------------------------------
+# A ONE-SHOT job: it runs `deploy/tls.sh renew` once and exits. It is started
+# twice a day by bugsquash-tls-renew.timer (the file next to this one); you
+# never enable this .service itself.
+#
+# What tls.sh renew does - the same two commands you can type by hand:
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm certbot renew
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod exec proxy nginx -s reload
+# certbot only renews certificates that are close to expiry (Let's Encrypt
+# certificates live 90 days and are renewed ~30 days before), and the
+# graceful reload makes nginx use the new files without dropping connections.
+#
+# Install (stage 3, on the VM, after `scp -r deploy ...` - systemd only reads
+# units from its own directories, so the files are COPIED there):
+#
+#   sudo cp /opt/devops-workshop/deploy/systemd/bugsquash-tls-renew.service \
+#           /opt/devops-workshop/deploy/systemd/bugsquash-tls-renew.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now bugsquash-tls-renew.timer
+#
+# Check it:
+#   systemctl list-timers bugsquash-tls-renew.timer    # next/last run
+#   sudo systemctl start bugsquash-tls-renew.service   # run it NOW (test)
+#   journalctl -u bugsquash-tls-renew.service -n 50    # its output
+#   systemd-analyze verify /etc/systemd/system/bugsquash-tls-renew.*   # lint
+#
+# WHICH USER? There is no User= line, so the job runs as ROOT. That is the
+# simplest option that is correct in EVERY stage: tls.sh must read .env.prod
+# (mode 0600 = owner only) and talk to Docker, and the owner of
+# /opt/devops-workshop changes during the workshop - your own login in
+# stages 1-3, the "deploy" user from stage 4 on (CI, Ansible). Root can do
+# both whoever owns the folder, so the unit never needs editing.
+# Is that less safe than a normal user? Not really here: membership in the
+# "docker" group is ALREADY root-equivalent (anyone who can talk to the
+# Docker socket can start a container that mounts the host's / and edit any
+# file). A non-root account in the docker group would add a step, not
+# security. The job is still fenced in a little:
+#   NoNewPrivileges  no privilege gain through setuid binaries
+#   PrivateTmp       a private, empty /tmp for this job
+#   ProtectSystem    /usr, /boot and /etc are read-only for this job
+# =============================================================================
+
+[Unit]
+Description=Renew the Let's Encrypt certificate of Bug Squash Arena (certbot container)
+Documentation=file:///opt/devops-workshop/deploy/tls.sh
+# Order after Docker and after the network is really up (certbot must reach
+# Let's Encrypt). Wants= pulls network-online.target in; After= only orders.
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+# oneshot = "run to completion": systemd waits for the script to exit and
+# records its exit code (visible in `systemctl status`).
+Type=oneshot
+WorkingDirectory=/opt/devops-workshop
+# `/bin/bash script` instead of running the script directly: works even if
+# the executable bit got lost while copying the bundle (e.g. from Windows).
+ExecStart=/bin/bash /opt/devops-workshop/deploy/tls.sh renew
+# Plain log lines in the journal (tls.sh prints colours only on a terminal anyway).
+Environment=NO_COLOR=1
+# A renewal takes seconds; pulling the certbot image the first time or waiting
+# for a running deploy (tls.sh takes the same lock as deploy.sh) can take
+# minutes. Never let a hung run block the next one forever.
+TimeoutStartSec=20min
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full

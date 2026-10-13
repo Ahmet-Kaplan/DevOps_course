@@ -1,0 +1,54 @@
+# =============================================================================
+# templates/http-only/site.conf.template - edge proxy WITHOUT a certificate
+# -----------------------------------------------------------------------------
+# Rendered at container start to /etc/nginx/conf.d/site.conf by the official
+# nginx image's entrypoint (20-envsubst-on-templates.sh), which replaces every
+# ${DOMAIN} placeholder with the DOMAIN environment variable (so in the
+# rendered file you see the real name here). NGINX_ENVSUBST_FILTER in
+# docker-compose.prod.yml limits the substitution to DOMAIN, so nginx's own
+# variables such as $host or $request_uri are never touched.
+#
+# (deploy/nginx/ on the server is mounted at /etc/nginx/bugsquash/ inside the
+# proxy container - hence the include paths below.)
+#
+# WHEN is this file used? deploy/nginx/select-site-config.sh picks it at every
+# proxy start while /etc/letsencrypt/live/<DOMAIN>/fullchain.pem does NOT exist:
+#   * stage 1: DOMAIN is still empty - you browse to http://<VM external IP>;
+#   * stage 2: DOMAIN is set and DNS points here - http://<DOMAIN>, no TLS yet;
+#   * stage 3, the first step: Let's Encrypt must reach a running web server
+#     on port 80 BEFORE there is a certificate to configure (chicken-and-egg),
+#     so this config also serves the ACME challenge files;
+#   * CI (ci-test.yml), which runs this exact stack with DOMAIN=localhost.
+#
+# What it does: everything on plain HTTP port 80, for ANY Host header
+# (default_server), so the IP, the domain and "localhost" all work:
+#   /.well-known/acme-challenge/  certbot's webroot (the certificate request)
+#   /healthz                      the proxy's own liveness probe
+#   /api/ and /                   the app (backend / frontend containers)
+#
+# Logging in over plain HTTP needs COOKIE_SECURE=false in .env.prod: browsers
+# drop a cookie marked "Secure" when it arrives over http://, and every login
+# would seem to "not stick". Switch it back to true once HTTPS works (stage 3).
+# =============================================================================
+
+include /etc/nginx/bugsquash/snippets/http-level.conf;
+
+server {
+    # IPv4 only, on purpose: containers often have IPv6 disabled inside their
+    # network namespace, and nginx refuses to start if it cannot bind an
+    # address. Docker still publishes the port on the host's IPv4 AND IPv6
+    # addresses and forwards both to this listener.
+    listen 80 default_server;
+    # default_server = this block answers EVERY request on port 80, whatever
+    # host name the browser asked for. server_name is informational here: it
+    # becomes "devops.gulfheight.com _" once DOMAIN is set, or just "_" while
+    # DOMAIN is empty (stage 1). "_" is the conventional "matches no real
+    # host" placeholder - it keeps the line valid when DOMAIN is empty.
+    server_name ${DOMAIN} _;
+
+    include /etc/nginx/bugsquash/snippets/cloudflare-real-ip.conf;
+    include /etc/nginx/bugsquash/snippets/acme-challenge.conf;
+    include /etc/nginx/bugsquash/snippets/healthz.conf;
+    include /etc/nginx/bugsquash/snippets/security-headers.conf;
+    include /etc/nginx/bugsquash/snippets/proxy-to-app.conf;
+}

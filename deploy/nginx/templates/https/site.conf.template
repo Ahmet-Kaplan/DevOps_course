@@ -1,0 +1,121 @@
+# =============================================================================
+# templates/https/site.conf.template - edge proxy WITH a Let's Encrypt certificate
+# -----------------------------------------------------------------------------
+# Rendered at container start to /etc/nginx/conf.d/site.conf (every ${DOMAIN}
+# placeholder replaced by the DOMAIN environment variable - see the http-only
+# template for how). deploy/nginx/select-site-config.sh picks THIS file
+# as soon as /etc/letsencrypt/live/${DOMAIN}/fullchain.pem exists in the
+# "letsencrypt" volume, the next time the proxy container starts:
+#   * stage 3 by hand: `docker compose ... run --rm certbot certonly ...`,
+#     then `docker compose ... restart proxy`;
+#   * `./deploy/tls.sh issue` (does both steps for you);
+#   * stage 5: Ansible restored a certificate backup onto a rebuilt server.
+#
+#   Internet --:80---> this proxy: ACME challenges + /healthz, the rest -> 301 https
+#   Internet --:443--> this proxy (TLS ends HERE) --+-- /api/ --> backend:3000
+#                                                   '-- /     --> frontend:8080
+#
+# TLS terminates in this container: HTTPS ends here, the hop to the app
+# containers is plain HTTP over the private "edge" Docker network, which never
+# leaves the machine.
+# =============================================================================
+
+include /etc/nginx/bugsquash/snippets/http-level.conf;
+
+
+# =============================================================================
+# Port 80 (plain HTTP): ACME challenges + healthcheck, redirect everything else
+# =============================================================================
+server {
+    listen 80 default_server;           # IPv4 only - see the http-only template
+    server_name ${DOMAIN};
+
+    include /etc/nginx/bugsquash/snippets/cloudflare-real-ip.conf;
+    # Let's Encrypt fetches renewal challenges over plain HTTP - must NOT redirect.
+    include /etc/nginx/bugsquash/snippets/acme-challenge.conf;
+    # The container healthcheck and deploy.sh probe http://127.0.0.1/healthz.
+    include /etc/nginx/bugsquash/snippets/healthz.conf;
+
+    # Everything else -> HTTPS. 301 = permanent: browsers remember it.
+    # The host name is spelled out instead of using $host, so a request with a
+    # forged Host header can never turn this into an open redirect.
+    location / {
+        return 301 https://${DOMAIN}$request_uri;
+    }
+}
+
+
+# =============================================================================
+# Port 443 (HTTPS): the real site
+# =============================================================================
+server {
+    # nginx >= 1.25.1 enables HTTP/2 with a separate `http2 on;` directive
+    # (the old `listen 443 ssl http2;` form is deprecated).
+    listen 443 ssl default_server;
+    http2 on;
+    server_name ${DOMAIN};
+
+    # ---- Certificate ------------------------------------------------------------
+    # Written by certbot into the "letsencrypt" volume (mounted read-only here).
+    # live/<domain>/ holds SYMLINKS to the newest files in archive/<domain>/;
+    # a renewal just repoints the symlinks, so this config never changes - nginx
+    # only needs a reload (`./deploy/tls.sh renew` does that).
+    # privkey.pem is root-only (0600): that is why this container's nginx
+    # MASTER process runs as root (it reads keys and binds ports at startup);
+    # the worker processes that talk to the internet run as user "nginx".
+    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+
+    # ---- TLS settings (Mozilla "intermediate" profile, written out inline) ------
+    # Inline instead of certbot's options-ssl-nginx.conf: that file is only
+    # created by certbot's nginx PLUGIN, which we do not use (webroot instead),
+    # and inline settings are visible and reviewable right here.
+    ssl_protocols TLSv1.2 TLSv1.3;
+    # TLS 1.2 cipher suites (TLS 1.3 suites are not configured by this
+    # directive - all of them are strong). ECDHE-only: every suite has forward
+    # secrecy, and because no classic "DHE" suite is offered, no ssl_dhparam
+    # file is needed. certbot's default key type is ECDSA, so the ECDSA suites
+    # are the ones actually used; the RSA ones keep an RSA certificate working.
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    # All offered suites are strong, so let the client pick the one that is
+    # fastest on ITS hardware (e.g. ChaCha20 on phones without AES instructions).
+    ssl_prefer_server_ciphers off;
+    # ssl_ecdh_curve is left at OpenSSL's default on purpose: newer OpenSSL
+    # releases add post-quantum hybrid key exchange there automatically.
+
+    # Session resumption: a returning browser skips the full handshake.
+    # The cache is shared by all worker processes (10 MB ~ 40,000 sessions).
+    ssl_session_cache shared:BugsquashTLS:10m;
+    ssl_session_timeout 1d;
+    # Session TICKETS are encrypted with a key that nginx never rotates while it
+    # runs; a stolen ticket key would decrypt past sessions (no forward secrecy).
+    ssl_session_tickets off;
+    # No `ssl_stapling`: Let's Encrypt shut down its OCSP service in 2025 (its
+    # certificates no longer contain an OCSP URL), so there is nothing to staple.
+
+    keepalive_timeout 65s;              # idle client connections (browser <-> nginx)
+
+    # ---- Security headers -------------------------------------------------------
+    # HSTS: "for the next year, only ever talk HTTPS to this host" - the browser
+    # upgrades http:// links itself, so the port-80 redirect is not even hit and
+    # SSL-stripping attacks stop working. Only the TLS terminator can set it,
+    # which is why it lives HERE. Tip: while experimenting (or with a STAGING
+    # certificate, which browsers do not trust), use max-age=300 - a mistake
+    # with a 1-year value is cached by browsers.
+    # (includeSubDomains covers *.${DOMAIN} only, not the parent domain.)
+    # Classroom pitfall: a browser that has seen this header refuses plain
+    # http://${DOMAIN} for a year - e.g. when you replay stage 2 on a fresh VM.
+    # Use a private window, or clear it in Chrome: chrome://net-internals/#hsts
+    # -> "Delete domain security policies". (Browsers ignore HSTS sent with an
+    # untrusted certificate, so a STAGING certificate never sets it.)
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    # Same level as the add_header above, so both sets apply to every response.
+    include /etc/nginx/bugsquash/snippets/security-headers.conf;
+
+    include /etc/nginx/bugsquash/snippets/cloudflare-real-ip.conf;
+    include /etc/nginx/bugsquash/snippets/acme-challenge.conf;
+    # Also on 443: deploy/tls.sh checks https://<DOMAIN>/healthz to prove the
+    # certificate works, independently of whether the app is up.
+    include /etc/nginx/bugsquash/snippets/healthz.conf;
+    include /etc/nginx/bugsquash/snippets/proxy-to-app.conf;
+}

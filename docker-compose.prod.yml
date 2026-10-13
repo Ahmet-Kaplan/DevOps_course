@@ -1,27 +1,56 @@
 # =============================================================================
 # docker-compose.prod.yml - PRODUCTION stack for Bug Squash Arena
 # -----------------------------------------------------------------------------
-# Runs on the Google Cloud VM (Compute Engine, Debian 13), normally via
-# ./deploy/deploy.sh:
-#     docker compose -f docker-compose.prod.yml --env-file .env.prod pull
-#     docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --wait
+# Runs on the Google Cloud VM (Compute Engine, Debian 13) in /opt/devops-workshop.
+# The server holds NO Git checkout, only this small "deploy bundle":
 #
-# Request path in production:
+#     /opt/devops-workshop/
+#       docker-compose.prod.yml   this file
+#       .env.prod                 settings + secrets (chmod 600), from .env.prod.example
+#       deploy/nginx/             config of the "proxy" container      (stage 1+)
+#       deploy/deploy.sh, tls.sh  helper scripts                        (stage 3/4+)
+#       deploy/systemd/           certificate renewal timer             (stage 3+)
 #
-#   browser --HTTPS:443--> host nginx (apt package, terminates TLS)
-#                            |-- /api/ --> 127.0.0.1:3000  backend container
-#                            '-- /     --> 127.0.0.1:8080  frontend container
-#                                                          (nginx-unprivileged,
-#                                                           also proxies /api/
-#                                                           to backend:3000)
+# The same file is used in EVERY stage of the workshop - you never edit it,
+# only .env.prod changes:
+#
+#   Stage 1  IP + HTTP     copy this file, .env.prod and deploy/nginx/ with scp, then
+#                              docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+#                          and open http://<VM external IP>. DOMAIN may stay empty.
+#   Stage 2  domain + HTTP set DOMAIN in .env.prod, copy it again, run the same `up -d`
+#                          (Compose recreates only the proxy, whose setting changed).
+#   Stage 3  HTTPS         run the "certbot" service once (see below), restart the
+#                          proxy, set COOKIE_SECURE=true, `up -d` again; copy
+#                          deploy/ and install the renewal timer (deploy/systemd/).
+#   Stage 4  automation    ./deploy/deploy.sh (pull -> up --wait -> smoke tests),
+#                          called by hand or by the CI deploy job (ci-main.yml).
+#   Stage 5  Ansible       ansible/provision.sh copies the bundle and renders .env.prod.
+#
+# Request path - Docker is the ONLY thing installed on the host; even the edge
+# web server (nginx) is a container:
+#
+#   browser --HTTP:80 / HTTPS:443--> proxy  (nginx:1.27-alpine; the ONLY service
+#                                     |      with published ports; terminates TLS
+#                                     |      from stage 3 on)
+#                                     |-- /api/ --> backend:3000   Express API
+#                                     '-- /     --> frontend:8080  nginx-unprivileged
+#                                                                  serving the Vite build
 #   backend --(internal "data" network)--> db:5432 (never reachable from outside)
+#
+#   certbot (profile "tools": never started by `up`) runs on demand, stage 3:
+#     docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm certbot \
+#       certonly --webroot -w /var/www/certbot -d <DOMAIN> ...
+#   It writes the challenge file into the certbot-webroot volume, the proxy
+#   serves it, and the certificate lands in the letsencrypt volume, which the
+#   proxy mounts read-only. ./deploy/tls.sh wraps exactly this.
 #
 # Differences from the dev stack (docker-compose.yml):
 #   * images are PULLED from Docker Hub (built + pushed by .github/workflows/
 #     ci-main.yml) - the server never compiles anything;
-#   * no bind mounts of source code: the image IS the release artifact;
+#   * no bind mounts of source code: the image IS the release artifact (the
+#     only bind mount is the proxy's config folder, deploy/nginx/);
 #   * restart policies, healthchecks, resource limits, log rotation,
-#     read-only root filesystems, two isolated networks.
+#     read-only root filesystems, two isolated networks, TLS at the edge.
 #
 # The ci-test workflow runs THIS EXACT FILE against freshly built images, so
 # what is tested is what ships.
@@ -113,23 +142,21 @@ services:
       # Compose refuses even earlier thanks to :? - fail fast, twice.
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required - set it in .env.prod (openssl rand -hex 32)}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      # Adds the "Secure" flag to the login cookie = "send it over HTTPS only".
+      # Browsers DROP a Secure cookie that arrives over plain http://, so:
+      #   stages 1-2 (HTTP only)  COOKIE_SECURE=false in .env.prod, or logins won't stick
+      #   stage 3+   (HTTPS)      COOKIE_SECURE=true
+      # The default (line missing from .env.prod) is the safe one: true.
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
       AUTH_RATE_LIMIT_MAX: ${AUTH_RATE_LIMIT_MAX:-30}
       # APP_VERSION is intentionally NOT set here: CI bakes it into the image
       # (build arg -> ENV), so the version always matches the code inside.
-    ports:
-      # LOOPBACK ONLY - this matters more than it looks! Docker publishes ports
-      # with its own iptables/nftables NAT rules: incoming packets are rewritten
-      # (DNAT) to the container IP and FORWARDED, so they never traverse the
-      # INPUT chain where a host firewall (ufw, firewalld, your own nftables
-      # rules) filters. "3000:3000" would slip past any such firewall; on our
-      # GCE VM only the VPC firewall rules, outside the VM, would still stand
-      # between the API and the internet - one loosened rule away from
-      # exposure. Binding to 127.0.0.1 means only the host nginx (same
-      # machine) can reach it, whatever the firewalls say.
-      - "127.0.0.1:3000:3000"
+    # Deliberately NO `ports:` - only the proxy is published (see there for
+    # why that matters). Debug from the server with:
+    #     docker compose -f docker-compose.prod.yml --env-file .env.prod \
+    #       exec backend wget -qO- http://127.0.0.1:3000/api/health
     networks:
-      - edge   # reachable by the frontend container (and published port)
+      - edge   # reachable by the proxy and the frontend container
       - data   # can reach the database
     depends_on:
       db:
@@ -169,16 +196,14 @@ services:
     image: ${DOCKER_HUB_USERNAME:?DOCKER_HUB_USERNAME is required - set it in .env.prod}/bugsquash-frontend:${IMAGE_TAG:-latest}
     <<: *hardening
     restart: unless-stopped
-    ports:
-      # nginx-unprivileged runs as a non-root user, and classically only root
-      # may bind ports < 1024 - hence 8080 instead of 80. (Docker 20.10+
-      # actually sets net.ipv4.ip_unprivileged_port_start=0 inside each
-      # container's network namespace, but 8080 keeps the image portable to
-      # rootless Podman, Kubernetes and older Docker.) Loopback only, see the
-      # explanation on the backend service.
-      - "127.0.0.1:8080:8080"
+    # Listens on 8080, not published (only the proxy is). nginx-unprivileged
+    # runs as a non-root user, and classically only root may bind ports < 1024
+    # - hence 8080 instead of 80. (Docker 20.10+ actually sets
+    # net.ipv4.ip_unprivileged_port_start=0 inside each container's network
+    # namespace, but 8080 keeps the image portable to rootless Podman,
+    # Kubernetes and older Docker.)
     networks:
-      - edge   # needs the backend (for /api/ proxying) but NEVER the database
+      - edge   # reached by the proxy; needs the backend (its own /api/ proxy) but NEVER the database
     depends_on:
       backend:
         condition: service_healthy
@@ -202,6 +227,174 @@ services:
           cpus: "0.25"
     logging: *default-logging
 
+  # ---------------------------------------------------------------------------
+  # proxy - the edge: reverse proxy (stage 1+) and TLS termination (stage 3+)
+  # ---------------------------------------------------------------------------
+  # Its whole config lives in deploy/nginx/ (copy that folder next to this
+  # file - stage 1). At every start it picks one of two site configs by itself:
+  #   no certificate for DOMAIN yet  -> templates/http-only: the app on port 80
+  #                                     for ANY host name (http://<IP>, http://<DOMAIN>)
+  #   certificate found              -> templates/https: port 80 redirects to
+  #                                     https://<DOMAIN>, the app is served on 443
+  # So going from stage 2 to stage 3 needs no edit here: get the certificate,
+  # then `docker compose ... restart proxy`.
+  proxy:
+    # The OFFICIAL image, not nginx-unprivileged: its master process runs as
+    # ROOT, its worker processes (the ones parsing requests from the internet)
+    # as the unprivileged "nginx" user. Root is needed because certbot writes
+    # Let's Encrypt private keys as root-only files (mode 0600) and the master
+    # must read them - at startup and on every reload after a renewal. An
+    # unprivileged image would force us to loosen the key permissions instead.
+    # The root master never touches network traffic, and the container is
+    # still locked down: read-only filesystem, no-new-privileges, cgroup limits.
+    image: nginx:1.27-alpine
+    <<: *hardening
+    restart: unless-stopped
+    # Start-up in two steps (replaces the image's ENTRYPOINT):
+    #   1. SOURCE deploy/nginx/select-site-config.sh: it checks for a
+    #      certificate and chooses the HTTP-only or the HTTPS template folder;
+    #   2. `exec` the image's normal entrypoint, which renders that template
+    #      into /etc/nginx/conf.d/site.conf and starts nginx ("$$@" = the
+    #      command below; $$ is how you write a literal $ in a Compose file).
+    # Sourcing (". file") needs no executable bit, so this also works when
+    # the bundle was copied from Windows. If the script is missing, the
+    # container stops right here with "can't open ..." in its logs.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - '. /etc/nginx/bugsquash/select-site-config.sh && exec /docker-entrypoint.sh "$$@"'
+      - proxy-start   # becomes $0 of the script above: the name in its error messages
+    # Setting `entrypoint` clears the image's default command, so repeat it.
+    # nginx runs in the foreground: it IS the container's main process.
+    command: ["nginx", "-g", "daemon off;"]
+    environment:
+      # The site's public host name, e.g. devops.gulfheight.com. OPTIONAL in
+      # stage 1 (empty = serve the app on the bare IP); set it from stage 2 on.
+      # Used in the templates (server_name, certificate path, HTTPS redirect)
+      # and by select-site-config.sh to look for a certificate.
+      DOMAIN: ${DOMAIN:-}
+      # The image's entrypoint runs envsubst on the templates. By default it
+      # would substitute EVERY environment variable it finds; this regex limits
+      # it to ${DOMAIN}, so nginx's own $variables can never be clobbered by an
+      # environment variable of the same name. ($$ = a literal $ for Compose.)
+      NGINX_ENVSUBST_FILTER: "^DOMAIN$$"
+    ports:
+      # The ONLY published ports of the whole stack. Docker publishes ports
+      # with its own iptables/nftables NAT rules: incoming packets are rewritten
+      # (DNAT) to the container IP and FORWARDED, so they never traverse the
+      # INPUT chain where a host firewall (ufw, firewalld, your own nftables
+      # rules) filters. On our GCE VM the VPC firewall rules (network tags
+      # http-server / https-server), outside the VM, decide who can reach 80
+      # and 443. Everything else stays on the private Docker networks.
+      - "80:80"       # HTTP: the app (stages 1-2); ACME challenges, /healthz, redirect (stage 3+)
+      - "443:443"     # HTTPS: the app (stage 3+). Before that nothing listens behind it.
+    networks:
+      - edge          # reaches backend:3000 and frontend:8080 - never the db
+    volumes:
+      # The proxy config from the deploy bundle: deploy/nginx/ on the server
+      # appears as /etc/nginx/bugsquash/ in the container, read-only.
+      # Long syntax for one reason: `create_host_path: false`. With the short
+      # form ("./deploy/nginx:/etc/nginx/bugsquash:ro"), a FORGOTTEN folder is
+      # silently created by Docker as an empty, root-owned directory - nginx
+      # then starts without any site and a later `scp` into it fails with
+      # "Permission denied". This way `up` stops at once with
+      # "bind source path does not exist: .../deploy/nginx".
+      # A whole DIRECTORY (not single files) on purpose: a single-file bind
+      # mount pins the file's inode, and tools that replace files atomically
+      # (rsync, Ansible, editors) write a NEW inode - the container would keep
+      # seeing the old content.
+      - type: bind
+        source: ./deploy/nginx
+        target: /etc/nginx/bugsquash
+        read_only: true
+        bind:
+          create_host_path: false
+      # Certificates (written by the certbot service, stage 3) and ACME
+      # challenge files. Read-only: the internet-facing container can serve
+      # them, not change them. In stages 1-2 these volumes are simply empty.
+      - letsencrypt:/etc/letsencrypt:ro
+      - certbot-webroot:/var/www/certbot:ro
+    depends_on:
+      # service_STARTED, not service_healthy: the edge comes up even while the
+      # app is still starting (or broken), so ACME challenges and /healthz keep
+      # working - nginx re-resolves backend/frontend on its own (see
+      # deploy/nginx/snippets/http-level.conf).
+      backend:
+        condition: service_started
+      frontend:
+        condition: service_started
+    healthcheck:
+      # /healthz is answered by the proxy itself on port 80 in both modes
+      # (never redirected), so the check does not depend on TLS or on the app.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      # What nginx must be able to WRITE, as small in-memory filesystems
+      # (recreated empty on every container start):
+      #   conf.d     the site config rendered from the template at startup. A
+      #              tmpfs also HIDES the image's default.conf ("Welcome to
+      #              nginx!") that lives in the same directory. mode=0755: only
+      #              root (the master) may write here - a hijacked worker must
+      #              not be able to drop in a config for the next reload.
+      #   /var/cache/nginx  temp files for buffered request/response bodies
+      #   /run       nginx.pid (/var/run is a symlink to it)
+      - /etc/nginx/conf.d:size=1m,mode=0755
+      - /var/cache/nginx:size=16m,mode=0755
+      - /run:size=1m,mode=0755
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.25"
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # certbot - Let's Encrypt client, run ON DEMAND only (stage 3+)
+  # ---------------------------------------------------------------------------
+  certbot:
+    # Pinned to an exact release: a new certbot version should arrive through
+    # a reviewed commit, not silently on the next pull.
+    image: certbot/certbot:v5.8.0
+    <<: *hardening
+    # A PROFILE hides the service from plain `docker compose up/pull/ps`: it
+    # is never started with the stack, it only runs when named explicitly as
+    # a one-off container (the image's ENTRYPOINT is `certbot`, so everything
+    # after the service name is a certbot argument):
+    #     docker compose -f docker-compose.prod.yml --env-file .env.prod \
+    #       run --rm certbot certonly --webroot -w /var/www/certbot -d <DOMAIN> ...
+    #     docker compose -f docker-compose.prod.yml --env-file .env.prod \
+    #       run --rm certbot certificates
+    # deploy/tls.sh and the renewal timer (deploy/systemd/) use the same service.
+    profiles: ["tools"]
+    volumes:
+      # Read-WRITE here (read-only in the proxy): certbot writes the challenge
+      # file into the webroot and the account key + certificates into
+      # /etc/letsencrypt.
+      - letsencrypt:/etc/letsencrypt
+      - certbot-webroot:/var/www/certbot
+    networks:
+      # Needs outbound internet access to talk to the Let's Encrypt API.
+      - edge
+    read_only: true
+    tmpfs:
+      # certbot's work and log directories; nothing in them needs to survive
+      # the one-off container (the output is printed to the terminal anyway).
+      # This also replaces the anonymous volume the image declares for
+      # /var/lib/letsencrypt, so `run --rm` leaves no orphan volumes behind.
+      - /var/lib/letsencrypt:size=16m
+      - /var/log/letsencrypt:size=16m
+      - /tmp:size=16m
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.50"
+    logging: *default-logging
+
 # -----------------------------------------------------------------------------
 # Networks - each container gets its own NETWORK NAMESPACE; a network is a
 # Linux bridge connecting the namespaces of its members. A container can only
@@ -220,7 +413,18 @@ networks:
     internal: true
 
 volumes:
-  # Created on the first `up` as "bugsquash_pgdata". `docker compose down`
-  # keeps it; `docker compose down -v` DELETES ALL DATA - never on prod.
-  # Back it up, e.g.:  docker compose ... exec -T db pg_dump -U bugsquash bugsquash > backup.sql
+  # Compose prefixes volume names with the project name, so on the host these
+  # are bugsquash_pgdata, bugsquash_letsencrypt and bugsquash_certbot-webroot
+  # (see `docker volume ls`). `docker compose down` keeps them;
+  # `docker compose down -v` DELETES THEM - never on prod.
+  #
+  # The database. Back it up with ansible/backup.yml (or by hand:
+  #   docker compose ... exec -T db pg_dump -U bugsquash -Fc bugsquash > db.dump)
   pgdata:
+  # Let's Encrypt account key, certificates, private keys and renewal config.
+  # Also backed up by ansible/backup.yml: restoring it on a rebuilt server
+  # avoids asking Let's Encrypt again (which has rate limits).
+  letsencrypt:
+  # Short-lived HTTP-01 challenge files, shared by certbot (writes) and the
+  # proxy (serves). Nothing in it is worth backing up.
+  certbot-webroot:

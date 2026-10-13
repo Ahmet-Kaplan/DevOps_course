@@ -1,0 +1,41 @@
+# =============================================================================
+# bugsquash-tls-renew.timer - start bugsquash-tls-renew.service twice a day
+# -----------------------------------------------------------------------------
+# A systemd TIMER is the modern cron: same idea ("run X at time Y"), plus
+# logging in the journal, catch-up after downtime and random delays.
+# A timer starts the .service with the SAME name (bugsquash-tls-renew.service).
+#
+# Install together with the .service - see the instructions at the top of
+# bugsquash-tls-renew.service. This is the unit you ENABLE:
+#   sudo systemctl enable --now bugsquash-tls-renew.timer
+#
+# Why twice a day if a certificate lives 90 days? Let's Encrypt recommends it:
+# certbot only renews when due, so most runs do nothing in a second, but a
+# failed renewal (DNS hiccup, CA outage) is retried 12 hours later instead
+# of a month later.
+#
+# The classic alternative is ONE cron line (`sudo crontab -e`, root's crontab
+# like this timer's job), either the raw commands:
+#   17 3,15 * * * cd /opt/devops-workshop && docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm -T certbot renew --quiet && docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T proxy nginx -s reload
+# or the script that wraps them (plus locking and checks):
+#   17 3,15 * * * /bin/bash /opt/devops-workshop/deploy/tls.sh renew >/dev/null 2>&1
+# The timer wins on visibility: `systemctl list-timers`, `journalctl`, and a
+# catch-up run after downtime (Persistent=true below).
+# =============================================================================
+
+[Unit]
+Description=Twice-daily Let's Encrypt renewal check for Bug Squash Arena
+
+[Timer]
+# 00:00 and 12:00 every day (server time, UTC on Google Cloud VMs)...
+OnCalendar=*-*-* 00,12:00:00
+# ...plus a random delay of up to 1 hour, so thousands of servers do not hit
+# Let's Encrypt at the same second (it asks clients to spread their load).
+RandomizedDelaySec=1h
+# If the VM was OFF at a scheduled time, run once as soon as it boots again
+# (systemd remembers the last run on disk).
+Persistent=true
+
+[Install]
+# timers.target is started on every boot: "enable" hooks the timer into it.
+WantedBy=timers.target

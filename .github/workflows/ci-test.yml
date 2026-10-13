@@ -35,10 +35,10 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Check out the code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js 24 (runs the zero-dependency test file)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -46,14 +46,14 @@ jobs:
       # layer cache (type=gha): unchanged layers (e.g. `npm ci` when the
       # lockfile did not change) are restored instead of rebuilt.
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       # Image names follow the contract: ${DOCKER_HUB_USERNAME}/bugsquash-*:${IMAGE_TAG}
       # With DOCKER_HUB_USERNAME=local and IMAGE_TAG=ci, the prod compose file
       # resolves to exactly these local tags - no registry involved.
       # `load: true` copies the built image into the runner's Docker daemon.
       - name: Build backend image (production target)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: app/backend
           target: production
@@ -66,7 +66,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=ci-test-backend
 
       - name: Build frontend image (production target)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: app/frontend
           target: production

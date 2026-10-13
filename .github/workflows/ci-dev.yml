@@ -45,10 +45,10 @@ jobs:
         working-directory: app/backend
     steps:
       - name: Check out the code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js 24 (same major as the node:24-alpine image)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           # Caches ~/.npm keyed on the lockfile hash: a later `npm ci` with an
@@ -78,10 +78,10 @@ jobs:
         working-directory: app/frontend
     steps:
       - name: Check out the code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -113,7 +113,7 @@ jobs:
         service: [backend, frontend]
     steps:
       - name: Check out the code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # hadolint parses the Dockerfile and runs shellcheck on every RUN line.
       # It flags e.g. unpinned base images, `apt-get` without cleanup,
@@ -133,7 +133,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Check out the code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # shellcheck is preinstalled on GitHub's ubuntu runners. It catches the
       # classic bash bugs: unquoted variables, word splitting, `cd` without

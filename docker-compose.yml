@@ -1,0 +1,173 @@
+# =============================================================================
+# docker-compose.yml - LOCAL DEVELOPMENT stack for Bug Squash Arena
+# -----------------------------------------------------------------------------
+# Quick start (zero configuration needed):
+#     docker compose up --build        # first run builds the dev images
+#     open http://localhost:5173       # the Vite dev server (with hot reload)
+#     docker compose down              # stop + remove containers (data is kept)
+#     docker compose down -v           # ...and also delete the database volume
+#
+# Useful while developing:
+#     docker compose logs -f backend   # follow one service's logs
+#     docker compose ps                # status + health of every service
+#     docker compose exec db psql -U bugsquash bugsquash   # SQL shell
+#
+# How this differs from docker-compose.prod.yml:
+#   * images are BUILT from local source using the "dev" Dockerfile stage
+#     (all devDependencies, file watchers) instead of PULLED from Docker Hub;
+#   * source code is BIND-MOUNTED into the containers, so editing a file on
+#     your laptop is instantly visible inside the container (hot reload);
+#   * insecure-but-convenient defaults so it works without any .env file.
+#
+# Every ${VAR:-default} below is "use $VAR if set (in your shell or in a .env
+# file next to this one), otherwise use the default". See .env.example.
+# =============================================================================
+
+# The project name prefixes everything Compose creates: containers
+# (bugsquash-dev-db-1), networks (bugsquash-dev_default) and volumes
+# (bugsquash-dev_pgdata). A different name than production ("bugsquash") means
+# dev and prod stacks can never clobber each other's containers or data.
+name: bugsquash-dev
+
+services:
+  # ---------------------------------------------------------------------------
+  # db - PostgreSQL 17
+  # ---------------------------------------------------------------------------
+  db:
+    # Official image, Alpine variant (much smaller than the Debian one).
+    image: postgres:17-alpine
+    environment:
+      # Read by the image's entrypoint script on FIRST start (empty data dir)
+      # to create the database and the superuser.
+      POSTGRES_DB: ${POSTGRES_DB:-bugsquash}
+      POSTGRES_USER: ${POSTGRES_USER:-bugsquash}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bugsquash-dev-password}
+    ports:
+      # "HOST_IP:HOST_PORT:CONTAINER_PORT". Binding to 127.0.0.1 means only
+      # programs on YOUR machine (psql, DBeaver...) can connect - not other
+      # devices on the cafe Wi-Fi. Without the IP, Docker listens on 0.0.0.0.
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      # A NAMED VOLUME lives outside the container's writable layer, so the data
+      # survives `docker compose down`, image upgrades and container rebuilds.
+      # Containers are disposable; volumes are where state lives.
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready asks the server "are you accepting connections?". The $$
+      # escapes Compose interpolation: the variables are expanded by the shell
+      # INSIDE the container, where the image already defines them.
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # backend - Express 5 API (Node 24), auto-restarts on code changes
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./app/backend
+      # Multi-stage Dockerfile: stop at the "dev" stage, which has every
+      # devDependency and runs `npm run dev` (= node --watch src/server.js).
+      target: dev
+    environment:
+      NODE_ENV: development
+      PORT: "3000"
+      # Standard libpq variable names - the `pg` driver reads them natively.
+      # PGHOST is the SERVICE NAME "db": Docker's embedded DNS server
+      # (127.0.0.11 inside every container) resolves service names to the
+      # current container IP on the project network.
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-bugsquash}
+      PGUSER: ${POSTGRES_USER:-bugsquash}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-bugsquash-dev-password}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-insecure-secret-change-me}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      # The dev stack is plain HTTP (no TLS), so the cookie must not be
+      # "Secure" - otherwise some browsers would silently drop it.
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      AUTH_RATE_LIMIT_MAX: ${AUTH_RATE_LIMIT_MAX:-30}
+      APP_VERSION: ${APP_VERSION:-dev}
+    ports:
+      # Published so you can curl the API directly:
+      #     curl http://localhost:3000/api/health
+      - "127.0.0.1:3000:3000"
+    volumes:
+      # BIND MOUNT: the host folder replaces /app/src inside the container.
+      # node --watch sees your edits and restarts the server automatically.
+      # Only src/ is mounted, so the image's /app/node_modules stays intact.
+      - ./app/backend/src:/app/src
+    # init: true runs a tiny init process (tini) as PID 1. In dev the command
+    # is a chain (npm -> node --watch -> node); tini forwards SIGTERM to
+    # it and reaps zombie processes, so `docker compose down` is instant
+    # instead of waiting 10 s for the SIGKILL fallback.
+    init: true
+    depends_on:
+      db:
+        # Wait until the db HEALTHCHECK passes - not merely until the container
+        # has started (Postgres needs a few seconds before it accepts queries).
+        condition: service_healthy
+    healthcheck:
+      # The same probe as production (docker-compose.prod.yml and the image's
+      # HEALTHCHECK): busybox wget ships with Alpine and exits non-zero on HTTP
+      # errors such as our 503 "db down". 127.0.0.1, not "localhost", which
+      # could resolve to IPv6 ::1.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # frontend - Vite dev server with hot module replacement
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./app/frontend
+      target: dev
+    environment:
+      # vite.config.js proxies /api/* to this URL, so the browser only ever
+      # talks to localhost:5173 (same origin => cookies just work, no CORS).
+      # Inside the Docker network the backend is reachable by service name.
+      VITE_API_PROXY_TARGET: http://backend:3000
+      # Docker Desktop (macOS/Windows) runs containers in a VM and file-change
+      # events often do not cross into it. Polling is the slower but reliable
+      # fallback:  VITE_USE_POLLING=true docker compose up
+      VITE_USE_POLLING: ${VITE_USE_POLLING:-false}
+    ports:
+      - "127.0.0.1:5173:5173"
+    volumes:
+      # Bind-mount the whole frontend source for instant hot reload...
+      - ./app/frontend:/app
+      # ...but MASK /app/node_modules with an ANONYMOUS VOLUME. Otherwise the
+      # host folder would hide the node_modules that `npm ci` installed in the
+      # image (or, worse, inject macOS/Windows binaries into a Linux container).
+      # On first creation Docker copies the image's node_modules into it.
+      # After changing package.json, rebuild and recreate this volume:
+      #     docker compose up --build --renew-anon-volumes
+      # Linux side effect: Docker needs a mount point for this volume, so it
+      # creates an EMPTY ./app/frontend/node_modules on the host, owned by root.
+      # A later `npm ci` on the host then fails with EACCES; remove it first with
+      # `rmdir app/frontend/node_modules` (no sudo needed: it is empty).
+      - /app/node_modules
+    init: true
+    depends_on:
+      backend:
+        # Vite starts fine without the API (it proxies lazily, per request),
+        # so "started" is enough here - no need to wait for "healthy".
+        condition: service_started
+
+# Named volumes are created once and reused on every `up`.
+# List them with `docker volume ls`; inspect with `docker volume inspect`.
+volumes:
+  pgdata:
+
+# No `networks:` section: Compose creates one bridge network called
+# "bugsquash-dev_default" and attaches every service to it. Every container
+# lives in its own NETWORK NAMESPACE (own interfaces, routing table and port
+# space - that is why three containers can all "listen on 0.0.0.0" without
+# conflicts); a Compose network is a Linux bridge (a virtual switch) that
+# connects those namespaces through veth cable pairs.
+# See docker-compose.prod.yml for a split into an isolated "data" network.

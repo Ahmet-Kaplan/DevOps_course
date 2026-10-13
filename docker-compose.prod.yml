@@ -1,0 +1,222 @@
+# =============================================================================
+# docker-compose.prod.yml - PRODUCTION stack for Bug Squash Arena
+# -----------------------------------------------------------------------------
+# Runs on the Hetzner server (Debian 13), normally via ./deploy/deploy.sh:
+#     docker compose -f docker-compose.prod.yml --env-file .env.prod pull
+#     docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --wait
+#
+# Request path in production:
+#
+#   browser --HTTPS:443--> host nginx (apt package, terminates TLS)
+#                            |-- /api/ --> 127.0.0.1:3000  backend container
+#                            '-- /     --> 127.0.0.1:8080  frontend container
+#                                                          (nginx-unprivileged,
+#                                                           also proxies /api/
+#                                                           to backend:3000)
+#   backend --(internal "data" network)--> db:5432 (never reachable from outside)
+#
+# Differences from the dev stack (docker-compose.yml):
+#   * images are PULLED from Docker Hub (built + pushed by .github/workflows/
+#     ci-main.yml) - the server never compiles anything;
+#   * no bind mounts of source code: the image IS the release artifact;
+#   * restart policies, healthchecks, resource limits, log rotation,
+#     read-only root filesystems, two isolated networks.
+#
+# The ci-test workflow runs THIS EXACT FILE against freshly built images, so
+# what is tested is what ships.
+# =============================================================================
+
+name: bugsquash
+
+# -----------------------------------------------------------------------------
+# Reusable snippets. Top-level keys starting with "x-" are ignored by Compose
+# ("extension fields"); the YAML anchor (&name) / alias (*name) lets several
+# services share one definition instead of copy-pasting it.
+# -----------------------------------------------------------------------------
+x-logging: &default-logging
+  # The json-file driver writes container stdout/stderr to
+  # /var/lib/docker/containers/<id>/<id>-json.log. Without rotation those files
+  # grow until the disk is full - a classic way to take down a small VPS.
+  driver: json-file
+  options:
+    max-size: "10m"   # rotate when a file reaches 10 MB
+    max-file: "3"     # keep at most 3 files => max 30 MB per container
+
+x-hardening: &hardening
+  # no-new-privileges sets the kernel's NO_NEW_PRIVS flag on PID 1: neither it
+  # nor any child can GAIN privileges through setuid/setgid binaries (e.g. su,
+  # sudo) or file capabilities. Cheap, effective defence in depth.
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  # ---------------------------------------------------------------------------
+  # db - PostgreSQL 17 (only reachable from the backend)
+  # ---------------------------------------------------------------------------
+  db:
+    image: postgres:17-alpine
+    <<: *hardening
+    # Restart after crashes and after a server reboot (the Docker daemon starts
+    # on boot), but NOT if you stopped it on purpose with `docker compose stop`.
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-bugsquash}
+      POSTGRES_USER: ${POSTGRES_USER:-bugsquash}
+      # ${VAR:?message} = abort with "message" if VAR is unset or empty.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required - set it in .env.prod (openssl rand -hex 32)}
+    volumes:
+      # Named volume => data survives container recreation and image upgrades.
+      # Real file location on the host: /var/lib/docker/volumes/bugsquash_pgdata
+      - pgdata:/var/lib/postgresql/data
+    # Deliberately NO `ports:` - the database is not published on the host at
+    # all. Debug from the server with:
+    #     docker compose -f docker-compose.prod.yml --env-file .env.prod \
+    #       exec db psql -U bugsquash bugsquash
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    # The postgres image uses STOPSIGNAL SIGINT ("fast shutdown": finish the
+    # checkpoint, then exit). Give it time before Docker escalates to SIGKILL,
+    # which would force crash recovery on the next start.
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          # Enforced by the kernel's CGROUPS (memory.max in cgroup v2). If the
+          # container exceeds it, the kernel OOM-killer kills a process INSIDE
+          # this cgroup - the rest of the server stays healthy.
+          memory: 512M
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # backend - Express API
+  # ---------------------------------------------------------------------------
+  backend:
+    image: ${DOCKER_HUB_USERNAME:?DOCKER_HUB_USERNAME is required - set it in .env.prod}/bugsquash-backend:${IMAGE_TAG:-latest}
+    <<: *hardening
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      PGHOST: db              # service name, resolved by Docker's embedded DNS
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-bugsquash}
+      PGUSER: ${POSTGRES_USER:-bugsquash}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required - set it in .env.prod (openssl rand -hex 32)}
+      # The backend refuses to start without it when NODE_ENV=production, and
+      # Compose refuses even earlier thanks to :? - fail fast, twice.
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required - set it in .env.prod (openssl rand -hex 32)}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      AUTH_RATE_LIMIT_MAX: ${AUTH_RATE_LIMIT_MAX:-30}
+      # APP_VERSION is intentionally NOT set here: CI bakes it into the image
+      # (build arg -> ENV), so the version always matches the code inside.
+    ports:
+      # LOOPBACK ONLY - this matters more than it looks! Docker publishes ports
+      # with its own iptables/nftables NAT rules: incoming packets are rewritten
+      # (DNAT) to the container IP and FORWARDED, so they never traverse the
+      # INPUT chain where ufw's rules live. "3000:3000" would expose the API to
+      # the whole internet even with `ufw deny 3000`. Binding to 127.0.0.1
+      # means only the host nginx (same machine) can reach it.
+      - "127.0.0.1:3000:3000"
+    networks:
+      - edge   # reachable by the frontend container (and published port)
+      - data   # can reach the database
+    depends_on:
+      db:
+        # Compose starts the backend only once the db healthcheck passes.
+        condition: service_healthy
+    healthcheck:
+      # Repeats the HEALTHCHECK baked into the image (same command), so the
+      # whole runtime contract is visible in one file; only the timings differ.
+      # busybox wget (~1 MB) rather than `node -e "fetch(...)"`: the probe runs
+      # INSIDE this container's cgroup, and a second ~40 MB node process every
+      # 15 s would eat into the 256M memory limit below. wget exits non-zero on
+      # HTTP errors, e.g. our 503 when the database is down.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    # Read-only root filesystem: the container cannot modify its own image
+    # layers (an attacker cannot drop a binary or edit the app code). The
+    # writable layer of the overlay filesystem is simply mounted read-only.
+    read_only: true
+    tmpfs:
+      # ...with a small in-memory scratch space for anything that insists on
+      # writing temp files. tmpfs counts against the memory cgroup below.
+      - /tmp:size=16m
+    deploy:
+      resources:
+        limits:
+          memory: 256M   # cgroup memory.max
+          cpus: "0.50"   # cgroup cpu.max: at most half of one CPU core
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # frontend - static files served by unprivileged nginx (port 8080)
+  # ---------------------------------------------------------------------------
+  frontend:
+    image: ${DOCKER_HUB_USERNAME:?DOCKER_HUB_USERNAME is required - set it in .env.prod}/bugsquash-frontend:${IMAGE_TAG:-latest}
+    <<: *hardening
+    restart: unless-stopped
+    ports:
+      # nginx-unprivileged runs as a non-root user, and classically only root
+      # may bind ports < 1024 - hence 8080 instead of 80. (Docker 20.10+
+      # actually sets net.ipv4.ip_unprivileged_port_start=0 inside each
+      # container's network namespace, but 8080 keeps the image portable to
+      # rootless Podman, Kubernetes and older Docker.) Loopback only, see the
+      # explanation on the backend service.
+      - "127.0.0.1:8080:8080"
+    networks:
+      - edge   # needs the backend (for /api/ proxying) but NEVER the database
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      # busybox wget ships with Alpine. 127.0.0.1 (not "localhost") avoids an
+      # IPv6 ::1 lookup in case nginx only listens on IPv4.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      # nginx-unprivileged keeps its PID file and proxy/client-body temp files
+      # in /tmp precisely so that the rest of the filesystem can be read-only.
+      - /tmp:size=16m
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.25"
+    logging: *default-logging
+
+# -----------------------------------------------------------------------------
+# Networks - each container gets its own NETWORK NAMESPACE; a network is a
+# Linux bridge connecting the namespaces of its members. A container can only
+# talk to containers that share at least one network with it.
+# -----------------------------------------------------------------------------
+networks:
+  edge:
+    # Ordinary bridge network: outbound internet access + published ports.
+    driver: bridge
+  data:
+    driver: bridge
+    # internal: true => no default gateway and no NAT. Containers on it cannot
+    # reach the internet and nothing on it can be published to the host. Only
+    # the backend is attached to both networks, so the db is reachable from
+    # the backend and from nothing else (not even the frontend container).
+    internal: true
+
+volumes:
+  # Created on the first `up` as "bugsquash_pgdata". `docker compose down`
+  # keeps it; `docker compose down -v` DELETES ALL DATA - never on prod.
+  # Back it up, e.g.:  docker compose ... exec -T db pg_dump -U bugsquash bugsquash > backup.sql
+  pgdata:

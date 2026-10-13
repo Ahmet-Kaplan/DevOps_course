@@ -16,76 +16,51 @@
 ![Cloudflare DNS](https://img.shields.io/badge/Cloudflare-DNS-F38020?logo=cloudflare&logoColor=white)
 ![Let's Encrypt](https://img.shields.io/badge/Let%27s%20Encrypt-TLS-003A70?logo=letsencrypt&logoColor=white)
 
-**Bug Squash Arena** is a small, silly DevOps-themed clicker game. You sign up, log in, and get
-10-second rounds in which a bug hops around a circuit board; every click squashes it for +1 point.
-Your scores are saved, the dashboard gives you a rank title ("Intern", "Works on My Machine",
-"10x Engineer", and so on), and a public top-10 leaderboard shows the best players. The game is
-just the excuse. The real subject of this workshop is the **path that code travels** from your
-laptop to a real HTTPS website. You run the stack locally with Docker Compose and promote changes
-through `dev -> test -> main` branches. GitHub Actions lints, tests, builds and pushes multi-arch
-images to Docker Hub, and you deploy them to a hardened Debian VM on Google Cloud (Compute Engine)
-behind nginx, Let's Encrypt and Cloudflare DNS at **https://devops.gulfheight.com**. There is
-deliberately **no Kubernetes**: one VM and one Compose file, so every moving part stays visible.
+**Bug Squash Arena** is a small, silly DevOps-themed clicker game. You sign up, a bug hops around a
+circuit board for 10 seconds, every click squashes it for +1 point, and your best score climbs a
+public top-10 leaderboard under a rank title from "Intern" to "10x Engineer".
 
----
+The game is just the excuse. The real subject is the **path code travels** from your laptop to a real
+website: you run the stack locally with Docker Compose, promote changes through `dev -> test -> main`,
+let GitHub Actions test, build and push the images, and then take them, stage by stage, to a Google
+Cloud VM that serves **https://devops.gulfheight.com**. There is deliberately no Kubernetes: one VM and
+one Compose file, so every moving part stays visible.
 
 ## Table of contents
 
 - [What you will learn](#what-you-will-learn)
 - [Tech stack](#tech-stack)
-- [Architecture](#architecture)
 - [Repository structure](#repository-structure)
-- [Student guide](#student-guide)
-  - [Part 0: Prerequisites](#part-0-prerequisites)
-  - [Part 1: Theory first](#part-1-theory-first)
-  - [Part 2: Run it locally](#part-2-run-it-locally)
-  - [Part 3: Git branching strategy](#part-3-git-branching-strategy)
-  - [Part 4: GitHub Actions and secrets](#part-4-github-actions-and-secrets)
-  - [Part 5: Provision the Google Cloud VM](#part-5-provision-the-google-cloud-vm)
-  - [Part 6: Cloudflare DNS](#part-6-cloudflare-dns)
-  - [Part 7: HTTPS with Let's Encrypt](#part-7-https-with-lets-encrypt)
-  - [Part 8: Deploy, pin and roll back](#part-8-deploy-pin-and-roll-back)
-  - [Part 9: Verify the deployment](#part-9-verify-the-deployment)
-  - [Part 10: Troubleshooting](#part-10-troubleshooting)
+- [Part 0: Prerequisites](#part-0-prerequisites)
+- [Part 1: Theory first](#part-1-theory-first)
+- [Part 2: Run it locally](#part-2-run-it-locally)
+- [Part 3: Git branching strategy](#part-3-git-branching-strategy)
+- [Part 4: GitHub Actions and secrets](#part-4-github-actions-and-secrets)
+- [Part 5: The deployment journey](#part-5-the-deployment-journey)
+- [Part 6: Troubleshooting](#part-6-troubleshooting)
 - [API reference](#api-reference)
 - [Environment variables](#environment-variables)
-- [Make it your own: exercises and stretch goals](#make-it-your-own-exercises-and-stretch-goals)
-
----
+- [Make it your own](#make-it-your-own)
 
 ## What you will learn
 
-- **What a container really is.** It is a Linux process isolated by namespaces and limited by
-  cgroups v2, running on an overlay filesystem built from image layers. You will also learn why
-  PID 1 must handle `SIGTERM`.
-- **Production-grade Dockerfiles**: multi-stage builds, layer-cache-friendly ordering, non-root
-  users, exec-form `CMD`, `HEALTHCHECK`s, and build arguments that stamp a version into the image.
-- **Docker Compose in two roles.** The dev stack uses bind mounts, hot reload and anonymous
-  volumes. The production stack pulls images and uses loopback-only ports, resource limits, an
-  internal network, read-only root filesystems and log rotation.
-- **Twelve-Factor configuration**: everything is configured through environment variables,
-  secrets never enter Git, and the stack fails fast when a required secret is missing.
-- **A branching strategy** (`dev -> test -> main`) with pull requests, branch protection and
-  promotion between environments.
-- **CI/CD with GitHub Actions**:
-  - linting, unit tests, `hadolint`, `shellcheck` and Compose validation;
-  - integration tests against the *real* production Compose file;
-  - multi-arch builds (amd64 and arm64) with Buildx and QEMU;
-  - the GitHub Actions layer cache;
-  - least-privilege tokens and concurrency groups;
-  - an optional SSH deploy job.
-- **Release engineering**: immutable `sha-<commit>` image tags, one-command rollbacks, smoke
-  tests, and a footer that shows *which commit is live*.
-- **Cloud and Linux server administration** on a Google Compute Engine VM:
-  - the `gcloud` CLI, a reserved static external IP, network tags and VPC firewall rules;
-  - SSH keys and a non-root deploy user;
-  - why Docker-published ports bypass host firewalls, and why our ports bind to `127.0.0.1`;
-  - unattended upgrades;
-  - the differences between Debian 13 and Debian 12.
-- **Reverse proxies**: TLS termination on the host nginx, `X-Forwarded-*` headers, Express
-  `trust proxy`, keepalive upstreams, and Docker's embedded DNS for container-to-container traffic.
-- **DNS and TLS**: Cloudflare records (gray cloud vs orange cloud, SSL modes), Let's Encrypt
-  HTTP-01 validation, and automatic renewal.
+- **What a container really is**: a Linux process isolated by namespaces, limited by cgroups v2 and
+  running on an overlay filesystem. You prove it on our VM, where Alpine and Debian containers report
+  the VM's own kernel.
+- **Production-grade Dockerfiles**: multi-stage builds, cache-friendly layer order, non-root users,
+  exec-form `CMD`, `HEALTHCHECK`s and a version stamped into every image.
+- **Docker Compose in two roles**: a hot-reload dev stack, and a hardened production stack with
+  resource limits, read-only root filesystems, an internal database network, log rotation, and one
+  edge proxy as the only container that publishes ports.
+- **Twelve-Factor configuration**: settings live in environment variables, secrets never enter Git,
+  and the stack refuses to start when one is missing.
+- **CI/CD with GitHub Actions**: lint, unit tests, `hadolint`, `shellcheck`, integration tests against
+  the real production Compose file, multi-arch image builds, and an SSH deploy job.
+- **Release engineering**: immutable `sha-<commit>` image tags, one-command rollbacks, smoke tests,
+  and a footer that shows which commit is live.
+- **A real server, one stage at a time**: a Google Cloud VM, a static IP and firewall rules,
+  Cloudflare DNS, Let's Encrypt HTTPS with nginx and certbot as containers, then automation with a
+  deploy script, CI and (optionally) Ansible.
 
 ## Tech stack
 
@@ -94,264 +69,98 @@ deliberately **no Kubernetes**: one VM and one Compose file, so every moving par
 | Frontend | Vite 8 multi-page app, vanilla JavaScript modules (no framework), ESLint 10 | [`app/frontend/`](app/frontend/) |
 | Frontend runtime | `nginxinc/nginx-unprivileged:1.27-alpine` (non-root, port 8080) | [`app/frontend/Dockerfile`](app/frontend/Dockerfile), [`app/frontend/nginx.conf`](app/frontend/nginx.conf) |
 | Backend | Node.js 24 (`node:24-alpine`), Express 5, `pg`, `bcryptjs`, `jsonwebtoken`, `helmet`, `express-rate-limit`, ESLint 9 | [`app/backend/`](app/backend/) |
-| Database | PostgreSQL 17 (`postgres:17-alpine`), schema created idempotently by the backend at startup | [`app/backend/src/db.js`](app/backend/src/db.js) |
-| Local orchestration | Docker Compose (project `bugsquash-dev`) | [`docker-compose.yml`](docker-compose.yml) |
-| Production orchestration | Docker Compose (project `bugsquash`) | [`docker-compose.prod.yml`](docker-compose.prod.yml) |
-| Tests | `node:test` unit tests (fake DB) and zero-dependency integration tests using `fetch` | [`app/backend/test/`](app/backend/test/), [`tests/integration/`](tests/integration/) |
+| Database | PostgreSQL 17 (`postgres:17-alpine`), schema created by the backend at startup | [`app/backend/src/db.js`](app/backend/src/db.js) |
+| Edge proxy | `nginx:1.27-alpine` container: reverse proxy, TLS, HTTP/2 | [`deploy/nginx/`](deploy/nginx/) |
+| Certificates | Let's Encrypt through the `certbot/certbot` container, renewed by a systemd timer | [`deploy/tls.sh`](deploy/tls.sh), [`deploy/systemd/`](deploy/systemd/) |
+| Orchestration | Docker Compose: dev project `bugsquash-dev`, production project `bugsquash` | [`docker-compose.yml`](docker-compose.yml), [`docker-compose.prod.yml`](docker-compose.prod.yml) |
+| Tests | `node:test` unit tests (fake DB), zero-dependency integration tests using `fetch` | [`app/backend/test/`](app/backend/test/), [`tests/integration/`](tests/integration/) |
 | CI/CD | GitHub Actions, Docker Buildx + QEMU, Docker Hub | [`.github/workflows/`](.github/workflows/) |
-| Server | Google Cloud Compute Engine VM `devops-workshop` (e2-small, `europe-west3-a`), Debian 13 "trixie" (Debian 12 also works), x86 or Arm (Tau T2A, Axion C4A) | [`deploy/gcp-vm-setup.md`](deploy/gcp-vm-setup.md) |
-| Network edge | Reserved static external IP `devops-workshop-ip`; VPC firewall rule `allow-http-https` (tcp:80,443) plus the default network's `default-allow-ssh` (tcp:22) | [`deploy/gcp-vm-setup.md`](deploy/gcp-vm-setup.md#3-open-ports-80-and-443-vpc-firewall-rules) |
-| Edge | Host nginx (apt package) + Let's Encrypt (certbot) | [`deploy/nginx/`](deploy/nginx/), [`deploy/letsencrypt-setup.md`](deploy/letsencrypt-setup.md) |
-| DNS | Cloudflare, `devops.gulfheight.com` A record | [`deploy/cloudflare-dns-guide.md`](deploy/cloudflare-dns-guide.md) |
-
----
-
-## Architecture
-
-### The complete flow: from laptop to browser
-
-```mermaid
-flowchart TB
-    subgraph LAPTOP["(1) Laptop: docker compose"]
-        direction LR
-        VITE["Vite dev server :5173<br/>hot reload"] --> API_DEV["backend :3000<br/>node --watch"] --> PG_DEV[("postgres :5432")]
-    end
-
-    subgraph GITHUB["(2) GitHub repository"]
-        direction LR
-        DEV_BR["branch dev"] -->|"pull request"| TEST_BR["branch test"] -->|"pull request"| MAIN_BR["branch main"]
-    end
-
-    subgraph ACTIONS["(3) GitHub Actions"]
-        direction LR
-        CI_DEV["ci-dev.yml<br/>lint + unit tests<br/>hadolint, shellcheck<br/>compose config"]
-        CI_TEST["ci-test.yml<br/>build production images<br/>run docker-compose.prod.yml<br/>integration tests"]
-        CI_MAIN["ci-main.yml<br/>build linux/amd64 + linux/arm64<br/>push :latest + :sha-xxxxxxx"]
-    end
-
-    HUB[("(4) Docker Hub<br/>user/bugsquash-backend<br/>user/bugsquash-frontend")]
-
-    subgraph GCE["(5) Google Cloud VM devops-workshop: Debian 13"]
-        DEPLOY["deploy/deploy.sh<br/>compose pull, up --wait, smoke tests"]
-        NGINX["host nginx :80 and :443<br/>Let's Encrypt TLS"]
-        FE["frontend container<br/>nginx-unprivileged<br/>127.0.0.1:8080"]
-        BE["backend container<br/>Express 5<br/>127.0.0.1:3000"]
-        DB[("postgres 17<br/>internal network: data")]
-    end
-
-    CF["(6) Cloudflare DNS<br/>devops.gulfheight.com A record<br/>to the static external IP"]
-    USER(["(7) User's browser"])
-    VPCFW{{"GCP VPC firewall<br/>allow tcp:22, 80, 443 only"}}
-
-    LAPTOP -->|"git push"| DEV_BR
-    DEV_BR -.->|"push / PR"| CI_DEV
-    TEST_BR -.->|"push / PR"| CI_TEST
-    MAIN_BR -.->|"push"| CI_MAIN
-    CI_MAIN -->|"docker push"| HUB
-    CI_MAIN -.->|"optional ssh deploy job"| DEPLOY
-    HUB -->|"docker compose pull"| DEPLOY
-    DEPLOY --> FE & BE & DB
-    USER -->|"a. DNS lookup"| CF
-    USER -->|"b. HTTPS :443"| VPCFW
-    VPCFW --> NGINX
-    NGINX -->|"/"| FE
-    NGINX -->|"/api/"| BE
-    BE --> DB
-```
-
-The same diagram in plain ASCII, for terminals and `less README.md`:
-
-```
- (1) LAPTOP            docker compose up --build             (project "bugsquash-dev")
-                       vite :5173  -->  backend :3000  -->  postgres :5432
-                             |
-                             | git push
-                             v
- (2) GITHUB            dev  ----PR---->  test  ----PR---->  main
-                        |                 |                  |
-                        | push / PR       | push / PR        | push
-                        v                 v                  v
- (3) GITHUB ACTIONS    ci-dev.yml        ci-test.yml        ci-main.yml
-                       lint, unit        build production   build amd64 + arm64,
-                       tests, hadolint,  images, run the    push :latest and
-                       shellcheck,       real compose.prod, :sha-xxxxxxx
-                       compose config    integration tests  (optional ssh deploy)
-                                                             |
-                                                             | docker push
-                                                             v
- (4) DOCKER HUB        <user>/bugsquash-backend       <user>/bugsquash-frontend
-                                                             |
-                                                             | docker compose pull + up --wait
-                                                             v (deploy/deploy.sh)
- (5) GOOGLE CLOUD VM  +------------------------------------------------------------------+
-     Compute Engine   | VM devops-workshop (e2-small), static IP devops-workshop-ip      |
-     Debian 13        | host nginx  :80  --> 301 to https (except /.well-known/acme-...) |
-     /opt/devops-     |             :443 --> TLS (Let's Encrypt cert)                    |
-       workshop       |               |-- /api/ --> 127.0.0.1:3000 [backend]             |
-                      |               '-- /     --> 127.0.0.1:8080 [frontend]            |
-                      | network "edge":            frontend, backend                     |
-                      | network "data" (internal): backend --> [db] postgres :5432       |
-                      +------------------------------------------------------------------+
-                                     ^
-                                     | b) HTTPS :443 to that IP, let through by the VPC
-                                     |    firewall rule allow-http-https (outside the VM)
- (7) USER'S BROWSER  ----------------+
-       |
-       | a) "What is the IP of devops.gulfheight.com?"
-       v
- (6) CLOUDFLARE DNS    A record  devops.gulfheight.com -> <VM static IP>   (gray cloud)
-```
-
-### The runtime request path (production)
-
-```mermaid
-flowchart LR
-    B(["Browser"]) -->|"(1) resolve devops.gulfheight.com"| CF["Cloudflare DNS"]
-    CF -.->|"orange cloud only:<br/>proxies the HTTPS traffic"| N
-    B -->|"(2) HTTPS :443<br/>(gray cloud: direct)"| N["host nginx on the VM<br/>TLS termination"]
-    N -->|"location /api/<br/>127.0.0.1:3000"| BE["backend<br/>Express API"]
-    N -->|"location /<br/>127.0.0.1:8080"| FE["frontend<br/>nginx-unprivileged"]
-    FE -.->|"own /api/ proxy, backend:3000<br/>via Docker DNS (CI + smoke tests)"| BE
-    BE -->|"db:5432<br/>network data (internal)"| DB[("PostgreSQL")]
-```
-
-A few facts that make this design work:
-
-- The VM's front door is the **GCP VPC firewall**, which filters in Google's network before a
-  packet reaches the VM: the rule `allow-http-https` opens tcp:80 and 443 to VMs with the network
-  tags `http-server` / `https-server`, and the default network's `default-allow-ssh` rule opens
-  tcp:22. There is no `ufw` on the VM.
-- Containers publish ports on **127.0.0.1 only**. Docker writes its own NAT rules for published
-  ports, so a host firewall such as `ufw` would never see that traffic, and on our VM the VPC
-  firewall would be the only layer left. Binding to loopback makes the host nginx the only way in,
-  whatever the firewall rules say. The database is not published at all.
-- The `data` network is `internal: true`. Only the backend is attached to both networks, so the
-  frontend container cannot reach Postgres, and Postgres cannot reach the internet.
-- The host nginx sends `/api/` **straight to the backend**, which saves a hop. The frontend
-  container *also* proxies `/api/` to `backend:3000` through Docker's embedded DNS
-  (`resolver 127.0.0.11`). CI uses that path to test the whole stack through one port, `:8080`.
-
-### Environments at a glance
-
-|  | Local dev | CI (`ci-test.yml`) | Production |
-|--|-----------|--------------------|------------|
-| Compose file | `docker-compose.yml` | `docker-compose.prod.yml` | `docker-compose.prod.yml` |
-| Project name | `bugsquash-dev` | `bugsquash` | `bugsquash` |
-| Images | built locally (Dockerfile `dev` targets) | built in the job (`production` targets), tagged `local/bugsquash-*:ci` | pulled from Docker Hub: `<user>/bugsquash-*:<tag>` |
-| Env file | `.env` (optional) | `.env.ci` (throwaway, random secrets) | `.env.prod` (`chmod 600`) |
-| Source code | bind-mounted, hot reload | baked into the image | baked into the image |
-| Entry URL | http://localhost:5173 | http://localhost:8080 | https://devops.gulfheight.com |
-| Postgres port | `127.0.0.1:5432` | not published | not published |
-
----
+| Server | Google Compute Engine VM `devops` (`e2-medium`, `europe-central2-a`), Debian 13 | [Google Cloud reference](deploy/gcp-vm-setup.md) |
+| DNS | Cloudflare, A record `devops.gulfheight.com` | [Stage 2](deploy/stage-2-domain-http.md) |
+| Provisioning (optional) | Ansible: one command sets up or rebuilds the VM | [`ansible/`](ansible/README.md) |
 
 ## Repository structure
 
-```
+```text
 .
-├── README.md                          you are here
-├── .env.example                       local dev variables (optional: cp .env.example .env)
-├── .env.prod.example                  production template (cp to .env.prod on the server)
-├── .gitignore                         keeps node_modules, dist/ and real .env files out of Git
-├── docker-compose.yml                 LOCAL DEV: builds "dev" targets, bind mounts, hot reload
-├── docker-compose.prod.yml            PRODUCTION: pulls images, loopback ports, limits, 2 networks
+├── README.md                    you are here
+├── .env.example                 local dev overrides (optional: cp .env.example .env)
+├── .env.prod.example            production settings template (Stage 1: cp to .env.prod on your laptop)
+├── docker-compose.yml           LOCAL DEV: builds "dev" targets, bind mounts, hot reload
+├── docker-compose.prod.yml      PRODUCTION: pulled images, proxy + certbot, limits, two networks
 ├── .github/workflows/
-│   ├── ci-dev.yml                     dev:  lint, unit tests, hadolint, shellcheck, compose config
-│   ├── ci-test.yml                    test: build prod images, run prod compose, integration tests
-│   └── ci-main.yml                    main: multi-arch build + push to Docker Hub, optional deploy
+│   ├── ci-dev.yml               dev:  lint, unit tests, hadolint, shellcheck, compose/nginx/systemd/Ansible checks
+│   ├── ci-test.yml              test: build prod images, run deploy.sh in HTTP and HTTPS mode, integration tests
+│   └── ci-main.yml              main: multi-arch build + push to Docker Hub, optional deploy (Stage 4)
 ├── app/
-│   ├── backend/                       Express 5 REST API (Node 24, CommonJS)
-│   │   ├── Dockerfile                 multi-stage: base -> dev | prod-deps -> production
-│   │   ├── package.json, package-lock.json, eslint.config.js, .dockerignore
-│   │   ├── src/server.js              entry point: migrate DB, listen, graceful SIGTERM shutdown
-│   │   ├── src/app.js                 createApp() factory: helmet, trust proxy, routes, errors
-│   │   ├── src/config.js              reads and validates env vars (fails fast on bad config)
-│   │   ├── src/db.js                  pg pool, schema migration with retry loop, all SQL
-│   │   ├── src/validation.js          username / password / score rules (MAX_SCORE = 200)
-│   │   ├── src/middleware/auth.js     issue, verify and clear the JWT cookie
-│   │   ├── src/routes/                auth.js, scores.js, health.js
-│   │   └── test/                      node:test unit tests with a fake DB (no Postgres needed)
-│   └── frontend/                      Vite multi-page app, vanilla JS modules
-│       ├── Dockerfile                 multi-stage: dev (vite :5173) | build -> production (nginx :8080)
-│       ├── nginx.conf                 static files, /healthz, /api/ proxy, caching, CSP
-│       ├── vite.config.js             dev server :5173, /api proxy, 5 HTML entry points
-│       ├── package.json, package-lock.json, eslint.config.js, .dockerignore
-│       ├── index.html                 landing page: practice board + public leaderboard
-│       ├── login.html, signup.html    auth forms with inline errors
-│       ├── dashboard.html             protected: game, stats, rank, recent games, leaderboard
-│       ├── 404.html                   "This page escaped." (served by nginx error_page)
-│       ├── src/js/                    one module per page + api.js, game.js, ranks.js, layout.js ...
-│       ├── src/styles/                tokens, base, layout, components, game, pages (CSS)
-│       └── public/                    favicon.svg, swatter.svg (copied as-is)
-├── tests/integration/api.test.mjs     black-box API tests: node:test + fetch, zero dependencies
-├── deploy/
-│   ├── deploy.sh                      on the server: validate, pull, up --wait, smoke test, prune
-│   ├── gcp-vm-setup.md                guide 1: GCE VM, static IP, VPC firewall, SSH, Docker, nginx, first deploy
-│   ├── cloudflare-dns-guide.md        guide 2: A record, gray vs orange cloud, SSL modes
-│   ├── letsencrypt-setup.md           guide 3: certbot, bootstrap -> production config, renewal
-│   └── nginx/
-│       ├── bootstrap/devops.gulfheight.com.http-only.conf   HTTP-only, used to get the first cert
-│       └── conf.d/devops.gulfheight.com.conf                production host nginx: TLS, HSTS, proxy
-└── docs/containers-deep-dive.md       theory: namespaces, cgroups v2, overlayfs, VMs vs containers
+│   ├── backend/                 Express 5 REST API (Node 24)
+│   │   ├── Dockerfile           multi-stage: base -> dev | prod-deps -> production
+│   │   ├── src/                 server.js (SIGTERM shutdown), app.js, config.js, db.js, routes/, middleware/
+│   │   └── test/                node:test unit tests with a fake DB (no Postgres needed)
+│   └── frontend/                Vite multi-page app, vanilla JS modules
+│       ├── Dockerfile           multi-stage: dev (vite :5173) | build -> production (nginx :8080)
+│       ├── nginx.conf           static files, /healthz, /api/ proxy, caching, CSP
+│       ├── *.html               index, login, signup, dashboard, 404
+│       └── src/js/, src/styles/ one module per page + api.js, game.js, ranks.js ...
+├── tests/integration/api.test.mjs   black-box API tests: node:test + fetch, zero dependencies
+├── deploy/                      the "deploy bundle" that goes to the VM, plus the stage guides
+│   ├── stage-1-ip-http.md ... stage-4-automated-deploys.md    the deployment journey (Part 5)
+│   ├── gcp-vm-setup.md          Google Cloud reference: machine types, static IP, firewall, costs
+│   ├── nginx/                   config of the proxy container
+│   │   ├── select-site-config.sh    picks the HTTP-only or the HTTPS config at every start
+│   │   ├── templates/           http-only/ and https/ site.conf.template
+│   │   └── snippets/            shared pieces: routing, ACME challenge, /healthz, headers
+│   ├── tls.sh                   Stage 3 shortcut: issue / renew / status, via the certbot container
+│   ├── systemd/                 bugsquash-tls-renew.service + .timer: renewal twice a day
+│   └── deploy.sh                Stage 4: pull, up --wait, reload the proxy, smoke tests, prune
+├── ansible/                     Stage 5 (optional): provision.sh, site.yml, backup.yml, roles/
+└── docs/containers-deep-dive.md theory: namespaces, cgroups v2, overlayfs, VMs vs containers
 ```
 
-Every config file is commented heavily on purpose. Read the comments, because they explain *why*
-each line is there.
+Every config file is heavily commented on purpose: the comments explain *why* each line is there.
 
----
+## Part 0: Prerequisites
 
-## Student guide
-
-Work through the parts in order. Parts 0 to 4 need only a laptop and free accounts. Parts 5 to 9
-need a Google Cloud project with billing enabled and a domain.
-
-### Part 0: Prerequisites
-
-**On your laptop**
-
-| Tool | Version | Check | Notes |
-|------|---------|-------|-------|
-| Git | any recent | `git --version` | |
-| Docker | Engine 24+ with the Compose v2 plugin, or Docker Desktop | `docker compose version` | Windows: use WSL 2 and keep the repo *inside* the WSL filesystem, because bind mounts from `C:\` are slow |
-| Node.js | 24 (optional) | `node --version` | Only needed to run lint, unit tests or integration tests *outside* containers. The frontend toolchain needs Node 20.19+, 22.13+ or 24 |
-| Google Cloud CLI | any recent | `gcloud --version` | Needed from Part 5 on. Install it from <https://cloud.google.com/sdk/docs/install>. `gcloud compute ssh` creates and uploads its own SSH key (`~/.ssh/google_compute_engine`) on first use |
-
-**Accounts**
+| Tool on your laptop | Check | Notes |
+|---------------------|-------|-------|
+| Git | `git --version` | |
+| Docker Engine 24+ with the Compose v2 plugin, or Docker Desktop | `docker compose version` | Windows: use WSL 2 and keep the repository *inside* the WSL filesystem; bind mounts from `C:\` are slow |
+| Node.js 24 (optional) | `node --version` | only to run lint and tests *outside* containers |
+| Google Cloud CLI (optional) | `gcloud --version` | Stage 1 works in the web console; the CLI versions are in its *Going deeper* and the [Google Cloud reference](deploy/gcp-vm-setup.md) |
 
 | Account | Cost | Used for |
 |---------|------|----------|
 | GitHub | free | repository, pull requests, Actions |
-| Docker Hub | free | image registry (2 public repositories) |
-| Google Cloud | pay-as-you-go, billed per second; estimate an e2-small in `europe-west3` with its disk and static IP in the [pricing calculator](https://cloud.google.com/products/calculator). New accounts get free-trial credit that covers a course comfortably. Delete everything afterwards: [costs and cleanup](deploy/gcp-vm-setup.md#15-costs-and-cleanup) | the production VM (Parts 5 to 9) |
-| Cloudflare + a domain | free plan | DNS. The course uses `gulfheight.com`; to use your own domain, see [the exercises](#make-it-your-own-exercises-and-stretch-goals) |
+| Docker Hub | free | your own images, from [Part 4](#part-4-github-actions-and-secrets) on. Stages 1 to 3 run the course's public images (`alhuraibisaeed`) |
+| Google Cloud | pay-as-you-go; new accounts get free-trial credit that covers the course | the VM ([costs and cleanup](deploy/gcp-vm-setup.md#5-costs-and-cleanup)) |
+| Cloudflare + a domain | free plan | DNS. The course uses `gulfheight.com`; see [Make it your own](#make-it-your-own) for yours |
 
-**Skills**: basic terminal use (`cd`, `ls`, editing a file) and basic Git (`clone`, `commit`, `push`).
+You need basic terminal use (`cd`, `ls`, editing a file) and basic Git (`clone`, `commit`, `push`).
 
-### Part 1: Theory first
+## Part 1: Theory first
 
 Read **[`docs/containers-deep-dive.md`](docs/containers-deep-dive.md)** before you type
-`docker compose up`. It explains what a container is from first principles, and you can prove each
-claim on a terminal:
+`docker compose up`. It explains what a container is from first principles, and every claim comes
+with a command you can run:
 
 | Chapter | Why it matters for this repo |
 |---------|------------------------------|
 | 1. Containers vs Docker | Docker is a toolchain; the isolation itself comes from the kernel |
-| 2. Namespaces | why three containers can all listen on "their" port without clashing (NET), and why your app is PID 1 (PID) |
+| 2. Namespaces | why each container has its own `localhost` and ports, and why your app is PID 1 |
 | 3. cgroups v2 | what `deploy.resources.limits` in `docker-compose.prod.yml` really does (and the OOM killer) |
 | 4. Overlay filesystem and layers | why the Dockerfiles copy `package*.json` before the source code |
-| 5. VMs vs containers | why we run containers *inside* a Google Compute Engine VM |
-| 6. Proof: the shared kernel | `uname -r` inside Alpine and Debian containers prints the host's kernel |
-| 7. [How this repo uses these concepts](docs/containers-deep-dive.md#7-how-this-repo-uses-these-concepts) | maps every production setting to the kernel feature behind it |
-| 8. Review questions | 14 quiz questions with hidden answers. Use them to test yourself |
+| 5. VMs vs containers | why we run containers *inside* a Google Cloud VM |
+| 6. Proof: the shared kernel | captured on our VM: Debian and Alpine containers print the VM's kernel |
+| 7. [How this repo uses these concepts](docs/containers-deep-dive.md#7-how-this-repo-uses-these-concepts) | every production setting mapped to the kernel feature behind it |
+| 8. Review questions | 14 quiz questions with hidden answers |
 
 > [!TIP]
-> Run the experiments on a Linux machine, or later on your Google Cloud VM. Docker Desktop on
-> macOS and Windows runs containers inside a hidden VM, so some outputs differ. Chapter 6.6
-> explains the differences.
+> Run the experiments on Linux, or later on your VM. Docker Desktop on macOS and Windows runs
+> containers inside a hidden VM, so some outputs differ (chapter 6.6 explains why).
 
-### Part 2: Run it locally
+## Part 2: Run it locally
 
-#### 2.1 Start the stack
+### 2.1 Start the stack
 
 ```bash
 git clone https://github.com/<your-account>/<your-repo>.git
@@ -359,51 +168,47 @@ cd <your-repo>
 docker compose up --build
 ```
 
-No `.env` file is needed, because every variable in `docker-compose.yml` has a safe development
-default. The first build takes a few minutes, and later starts take seconds thanks to layer caching.
-When the logs settle, open **http://localhost:5173**, sign up and squash some bugs.
+No `.env` file is needed: every variable in `docker-compose.yml` has a safe development default. The
+first build takes a few minutes; later starts take seconds thanks to layer caching. When the logs
+settle, open **http://localhost:5173**, sign up and squash some bugs.
 
 | Service | Container | Published on | What it is |
 |---------|-----------|--------------|------------|
 | `frontend` | `bugsquash-dev-frontend-1` | http://localhost:5173 | Vite dev server; proxies `/api` to `http://backend:3000` |
 | `backend` | `bugsquash-dev-backend-1` | http://localhost:3000 | Express API run by `node --watch` |
-| `db` | `bugsquash-dev-db-1` | `localhost:5432` | PostgreSQL 17, data in the named volume `bugsquash-dev_pgdata` |
+| `db` | `bugsquash-dev-db-1` | `localhost:5432` | PostgreSQL 17, data in the volume `bugsquash-dev_pgdata` |
 
-All three are bound to `127.0.0.1`, so other devices on your Wi-Fi cannot reach them. The browser
-only ever talks to `:5173`. Because the page and the API share that origin, the login cookie
-simply works and no CORS configuration is needed.
+All three are bound to `127.0.0.1`, so other devices on your Wi-Fi cannot reach them. The browser only
+talks to `:5173`; because the page and the API share that origin, the login cookie simply works and no
+CORS configuration is needed.
 
 ```bash
 curl -s http://localhost:3000/api/health; echo
 # {"status":"ok","db":"up","version":"dev","uptime":12}
 ```
 
-To override a default, copy the template first: `cp .env.example .env` (the `.env` file is
-git-ignored). For example, set `POSTGRES_HOST_PORT=5433` if you already run Postgres on your laptop.
+To override a default, `cp .env.example .env` (git-ignored) and edit it, for example
+`POSTGRES_HOST_PORT=5433` if a local Postgres already uses 5432.
 
-#### 2.2 Hot reload
+### 2.2 Hot reload
 
-- **Backend:** `./app/backend/src` is bind-mounted over `/app/src`. Edit a file, for example the
-  anti-cheat message in `app/backend/src/validation.js`, and `node --watch` restarts the server
-  within a second. Watch it happen with `docker compose logs -f backend`.
-- **Frontend:** the whole `./app/frontend` folder is bind-mounted. Edit
-  `app/frontend/src/js/ranks.js` (rank titles) or a CSS file, and the browser updates instantly.
-  `/app/node_modules` is masked by an *anonymous volume*, so the Linux `node_modules` from the
-  image are never hidden or overwritten by your host's files.
-- **macOS / Windows:** if edits are not picked up, start with polling:
-  `VITE_USE_POLLING=true docker compose up`, or set `VITE_USE_POLLING=true` in `.env`.
-- **Changed `package.json`?** Rebuild, and recreate the anonymous volume as well:
-  `docker compose up --build --renew-anon-volumes`.
+- **Backend:** `./app/backend/src` is bind-mounted over `/app/src`. Edit a file (for example the
+  anti-cheat message in `app/backend/src/validation.js`) and `node --watch` restarts the server within
+  a second: `docker compose logs -f backend`.
+- **Frontend:** the whole `./app/frontend` folder is bind-mounted. Edit `app/frontend/src/js/ranks.js`
+  (rank titles) or a CSS file and the browser updates instantly. An *anonymous volume* masks
+  `/app/node_modules`, so your host's files never hide the Linux `node_modules` from the image.
+- **macOS / Windows:** if edits are not picked up, start with `VITE_USE_POLLING=true docker compose up`.
+- **Changed `package.json`?** `docker compose up --build --renew-anon-volumes`.
 
-#### 2.3 Look inside the database
+### 2.3 Look inside the database
 
 ```bash
 docker compose exec db psql -U bugsquash bugsquash
 ```
 
 ```sql
-\dt                                            -- list tables: users, scores
-\d users                                       -- columns + the unique index on LOWER(username)
+\dt                                            -- tables: users, scores
 SELECT id, username, created_at FROM users ORDER BY id;
 SELECT u.username, MAX(s.score) AS best, COUNT(*) AS games
   FROM scores s JOIN users u ON u.id = s.user_id
@@ -411,12 +216,12 @@ SELECT u.username, MAX(s.score) AS best, COUNT(*) AS games
 \q
 ```
 
-GUI clients (DBeaver, pgAdmin) can connect to
+GUI clients (DBeaver, pgAdmin) connect to
 `postgresql://bugsquash:bugsquash-dev-password@localhost:5432/bugsquash`.
 
-#### 2.4 Lint and unit tests
+### 2.4 Lint and unit tests
 
-These are the same checks `ci-dev.yml` runs:
+The same checks `ci-dev.yml` runs:
 
 ```bash
 docker compose exec backend  npm run lint
@@ -425,98 +230,92 @@ docker compose exec frontend npm run lint
 ```
 
 > [!NOTE]
-> Only `src/` of the backend is bind-mounted. The `test/` folder is copied into the image at
-> build time, so after you edit a test, rebuild first with `docker compose up --build -d backend`.
-> You can also run the tests on the host with Node 24:
-> `cd app/backend && npm ci && npm test` (or `cd app/frontend && npm ci && npm run build`).
-> On Linux, once the dev stack has run, `app/frontend/node_modules` exists as an *empty, root-owned*
-> folder (Docker's mount point for the anonymous volume) and the host `npm ci` fails with `EACCES`.
-> Remove it first with `rmdir app/frontend/node_modules`; no `sudo` is needed because it is empty.
+> Only the backend's `src/` is bind-mounted; `test/` is copied in at build time, so rebuild after
+> editing a test: `docker compose up --build -d backend`. Or run the tests on the host with Node 24:
+> `cd app/backend && npm ci && npm test`. On Linux, a host `npm ci` in `app/frontend` fails with
+> `EACCES` once the dev stack has run: Docker left an empty, root-owned `node_modules` mount point.
+> Remove it with `rmdir app/frontend/node_modules` (no `sudo` needed).
 
-#### 2.5 Integration tests
+### 2.5 Integration tests
 
-[`tests/integration/api.test.mjs`](tests/integration/api.test.mjs) is a black-box test of the
-running system. It signs up a unique user, logs in, posts scores, checks the anti-cheat rule and
-reads the leaderboard. It has zero npm dependencies (`node:test` plus the built-in `fetch`).
+[`tests/integration/api.test.mjs`](tests/integration/api.test.mjs) tests the running system from the
+outside: it signs up a unique user, logs in, posts scores, checks the anti-cheat rule and reads the
+leaderboard. It has zero npm dependencies (`node:test` plus the built-in `fetch`).
 
 ```bash
-# against the dev stack (needs Node 18+ on the host)
+# against the dev stack (Node 18+ on the host)
 BASE_URL=http://localhost:5173 node --test tests/integration/api.test.mjs
 
-# straight against the API, without any frontend in front of it:
-# API_ONLY=1 skips the one test that expects the HTML landing page
+# straight against the API; API_ONLY=1 skips the one test that expects the HTML landing page
 API_ONLY=1 BASE_URL=http://localhost:3000 node --test tests/integration/api.test.mjs
 
-# no Node on the host? Linux only: share the host's network namespace with a throwaway container
+# no Node on the host? (Linux) a throwaway container sharing the host's network namespace
 docker run --rm --network host -v "$PWD/tests:/tests:ro" -e BASE_URL=http://localhost:5173 \
   node:24-alpine node --test /tests/integration/api.test.mjs
 ```
 
-Each run makes 5 requests to the rate-limited auth endpoints (the limit is 30 per 15 minutes per
-IP). If you hit `429`, wait or run `docker compose restart backend`, which resets the counter
-because it lives in process memory.
+Each run makes 5 requests to the rate-limited auth endpoints (30 per 15 minutes per IP). On `429`,
+wait or `docker compose restart backend`: the counter lives in process memory.
 
 > [!WARNING]
-> Never point the integration tests at production. Each run leaves a test player called
-> `it_<random>` with a score of 200 on the public leaderboard.
+> Never point the integration tests at production. Each run leaves a player called `it_<random>`
+> with a score of 200 on the public leaderboard.
 
-#### 2.6 Rehearse the production stack locally (optional)
+### 2.6 Rehearse the production stack locally (optional)
 
-This is exactly what `ci-test.yml` does. Stop the dev stack first, because both stacks use
-port 3000:
+This is what `ci-test.yml` does: the real `docker-compose.prod.yml`, with images built on your laptop
+instead of pulled from Docker Hub. The dev stack can keep running, because the production stack only
+publishes ports 80 and 443.
 
 ```bash
-docker compose down
-
 docker build --target production -t local/bugsquash-backend:ci  app/backend
 docker build --target production -t local/bugsquash-frontend:ci app/frontend
 
 cat > .env.ci <<EOF
 DOCKER_HUB_USERNAME=local
 IMAGE_TAG=ci
+DOMAIN=localhost
+COOKIE_SECURE=false
 POSTGRES_PASSWORD=$(openssl rand -hex 32)
 JWT_SECRET=$(openssl rand -hex 32)
-COOKIE_SECURE=false
 EOF
 
 docker compose -f docker-compose.prod.yml --env-file .env.ci up -d --wait
-BASE_URL=http://localhost:8080 node --test tests/integration/api.test.mjs
-# open http://localhost:8080 - this is the nginx-unprivileged production image
+BASE_URL=http://localhost node --test tests/integration/api.test.mjs
+# open http://localhost: proxy -> frontend / backend -> db, the same path as on the VM
 docker compose -f docker-compose.prod.yml --env-file .env.ci down -v
 rm .env.ci
 ```
 
-`COOKIE_SECURE=false` lets a browser log in over plain `http://localhost:8080`. `deploy.sh` also
-has a rehearsal mode that uses your local images instead of pulling: `SKIP_PULL=1 ./deploy/deploy.sh ci`.
-Set it up as described in the header of [`deploy/deploy.sh`](deploy/deploy.sh).
+`.env.ci` is git-ignored like every `.env.*` file, and it is not called `.env.prod` on purpose: it
+must never overwrite the production settings you create in Stage 1. `COOKIE_SECURE=false` lets the
+browser log in over plain `http://localhost`.
 
-#### 2.7 Useful Docker commands
+### 2.7 Useful Docker commands
 
 | Command | What it shows / does |
 |---------|----------------------|
 | `docker compose ps` | services, state, **health**, ports |
-| `docker compose logs -f backend` | follow one service's stdout/stderr |
-| `docker compose exec backend sh` | shell inside the container (Alpine has `sh`, not `bash`) |
-| `docker compose exec backend ps` | processes in the container's PID namespace: PID 1 is `docker-init` (tini) because of `init: true` |
+| `docker compose logs -f backend` | follow one service's output |
+| `docker compose exec backend sh` | a shell inside the container (Alpine has `sh`, not `bash`) |
+| `docker compose exec backend ps` | the container's PID namespace: PID 1 is `docker-init` (tini) because of `init: true` |
 | `docker compose restart backend` | `SIGTERM` -> graceful shutdown -> start again |
-| `docker compose up --build` | rebuild images after a Dockerfile or `package.json` change |
 | `docker compose down` | stop and remove containers; **keeps** the database volume |
 | `docker compose down -v` | ...and **deletes** the database volume (fresh start) |
 | `docker stats` | live CPU and memory per container (read from cgroups) |
 | `docker image ls` / `docker history <image>` | images and the layers they are made of |
-| `docker inspect bugsquash-dev-backend-1` | full container config: mounts, networks, env, health |
 | `docker network inspect bugsquash-dev_default` | which containers share the bridge network |
-| `docker volume ls` / `docker system df` | volumes; disk used by images, containers, volumes |
+| `docker volume ls` / `docker system df` | volumes; disk used by images, containers and volumes |
 
-### Part 3: Git branching strategy
+## Part 3: Git branching strategy
 
-Each branch is an environment, and every branch has its own quality gate:
+Each branch is an environment, and each has its own quality gate:
 
 | Branch | Purpose | Workflow | Runs on |
 |--------|---------|----------|---------|
-| `dev` | integration of day-to-day work | **CI (dev)** `ci-dev.yml`: lint, unit tests, hadolint, shellcheck, compose config | push to `dev`, PRs into `dev` |
-| `test` | release candidate | **CI (test)** `ci-test.yml`: build production images, run `docker-compose.prod.yml`, integration tests | push to `test`, PRs into `test` |
-| `main` | production | **CD (main)** `ci-main.yml`: build and push multi-arch images, optional deploy | push to `main` |
+| `dev` | day-to-day work | **CI (dev)** `ci-dev.yml`: lint, unit tests, static checks | push to `dev`, PRs into `dev` |
+| `test` | release candidate | **CI (test)** `ci-test.yml`: production images + integration tests | push to `test`, PRs into `test` |
+| `main` | production | **CD (main)** `ci-main.yml`: build and push images, optional deploy | push to `main` |
 
 ```mermaid
 gitGraph
@@ -532,7 +331,7 @@ gitGraph
     merge test id: "release (deploys sha-xxxxxxx)"
 ```
 
-#### 3.1 Create the branches (once)
+### 3.1 Create the branches (once)
 
 ```bash
 git checkout main && git pull
@@ -540,7 +339,7 @@ git checkout -b test && git push -u origin test
 git checkout -b dev  && git push -u origin dev
 ```
 
-#### 3.2 The daily loop
+### 3.2 The daily loop
 
 ```bash
 git checkout dev && git pull
@@ -550,17 +349,15 @@ git commit -m "feat: add a 'Chaos Monkey' rank"
 git push                                   # CI (dev) runs
 ```
 
-In a team, branch off `dev` instead (`git checkout -b feature/chaos-monkey dev`) and open a PR
-into `dev`. `ci-dev.yml` runs on that PR too.
+In a team, branch off `dev` (`git checkout -b feature/chaos-monkey dev`) and open a PR into `dev`;
+`ci-dev.yml` runs on the PR too.
 
-#### 3.3 Promote: dev -> test -> main
+### 3.3 Promote: dev -> test -> main
 
-1. On GitHub, open a pull request **base `test` <- compare `dev`**. CI (test) runs on the PR.
-   Merge it when it is green, and CI (test) runs again on the push to `test`.
-2. Open a pull request **base `main` <- compare `test`**. Merge it, and CD (main) builds, pushes and
-   (optionally) deploys.
-
-With the GitHub CLI:
+1. On GitHub, open a pull request **base `test` <- compare `dev`**. CI (test) runs on the PR; merge it
+   when it is green.
+2. Open a pull request **base `main` <- compare `test`** and merge it. CD (main) builds, pushes and,
+   from Stage 4 on, deploys.
 
 ```bash
 gh pr create --base test --head dev  --title "Promote dev to test"
@@ -568,335 +365,263 @@ gh pr create --base main --head test --title "Release"
 ```
 
 > [!IMPORTANT]
-> Use **"Create a merge commit"** for promotion PRs. Squash and rebase merges create *new* commits
-> on the target branch that do not exist on the source branch. The branches then drift apart, and
-> every later promotion PR shows phantom diffs and conflicts.
+> Use **"Create a merge commit"** for promotion PRs. Squash and rebase merges create *new* commits on
+> the target branch, the branches drift apart, and every later promotion shows phantom diffs.
 
-#### 3.4 Branch protection (Settings -> Rules -> Rulesets, or Settings -> Branches)
+### 3.4 Branch protection (Settings -> Rules -> Rulesets)
 
 | Branch | Suggested rules |
 |--------|-----------------|
-| `main` | require a pull request; require the status check **Build images & run integration tests** (it already ran on the tip of `test`, and GitHub shows checks per commit); block force pushes and deletion; in a team, require 1 approval |
+| `main` | require a pull request; require the check **Build images & run integration tests**; block force pushes and deletion; in a team, 1 approval |
 | `test` | require a pull request; require **Build images & run integration tests**; block force pushes |
-| `dev` | if you use feature branches, require the CI (dev) checks: **Backend - lint & unit tests**, **Frontend - lint & build**, **Hadolint - backend Dockerfile**, **Hadolint - frontend Dockerfile**, **Shellcheck & compose validation**; block force pushes |
+| `dev` | with feature branches, require the CI (dev) checks (**Backend - lint & unit tests**, **Frontend - lint & build**, both **Hadolint** checks, **Shellcheck, compose & systemd validation**, **Proxy config - render both modes & nginx -t**, **Ansible - lint & syntax check**); block force pushes |
 
-A status check only appears in the picker after it has run at least once, so push once to each
-branch before you configure the rules.
+A check only appears in the picker after it has run once, so push to each branch first.
+**Hotfixes:** branch from `main`, fix, PR into `main`, then merge `main` back into `test` and `dev`.
 
-**Hotfixes:** branch from `main`, fix the bug, and open a PR into `main`. Then merge `main` back
-into `test` and `dev` so the fix is not lost at the next promotion.
+## Part 4: GitHub Actions and secrets
 
-### Part 4: GitHub Actions and secrets
+### 4.1 Prepare Docker Hub
 
-#### 4.1 Prepare Docker Hub
+1. Sign in at <https://hub.docker.com> and create two **public** repositories,
+   **`bugsquash-backend`** and **`bugsquash-frontend`**. The VM pulls public images without a login.
+2. Create an access token: *Account settings -> Personal access tokens -> Generate new token*,
+   description `github-actions-bugsquash`, permissions **Read & Write**. Copy it now; it is shown
+   once. Never give CI your Docker Hub *password*.
 
-1. Sign in at <https://hub.docker.com>.
-2. Create two **public** repositories, **`bugsquash-backend`** and **`bugsquash-frontend`**
-   (*Repositories -> Create repository*). Public images can be pulled by the server without
-   logging in.
-3. Create an access token under *Account settings -> Personal access tokens -> Generate new token*:
-   - Description: `github-actions-bugsquash`
-   - Access permissions: **Read & Write** (CI needs to push)
-   - Copy the token now, because it is shown only once. Never put your Docker Hub *password* into CI.
+### 4.2 Add secrets and variables
 
-#### 4.2 Add secrets and variables
+GitHub -> your repository -> **Settings -> Secrets and variables -> Actions**:
 
-On GitHub, go to your repository -> **Settings -> Secrets and variables -> Actions**.
+| Kind | Name | Value | Needed for |
+|------|------|-------|------------|
+| Secret | `DOCKER_HUB_USERNAME` | your Docker Hub account name | CD (main): login and image names |
+| Secret | `DOCKER_HUB_ACCESS_TOKEN` | the token from 4.1 | CD (main): login |
+| Secrets | `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS` | the VM's address and a dedicated SSH key | the deploy job, set up in [Stage 4, step 6](deploy/stage-4-automated-deploys.md#6-add-the-github-secrets-and-the-switch) |
+| Variables | `ENABLE_AUTO_DEPLOY`, `DEPLOY_PATH`, `SITE_URL` | `true` switches the deploy job on | the deploy job (Stage 4) |
 
-| Kind | Name | Required? | Value | Used by |
-|------|------|-----------|-------|---------|
-| Secret | `DOCKER_HUB_USERNAME` | **required** | your Docker Hub account name | `ci-main.yml` (login + image names) |
-| Secret | `DOCKER_HUB_ACCESS_TOKEN` | **required** | the token from 4.1 | `ci-main.yml` (login) |
-| Secret | `DEPLOY_HOST` | auto-deploy only | the VM's **static external IP** (`devops-workshop-ip`), not the domain: SSH does not pass through Cloudflare's orange cloud | deploy job |
-| Secret | `DEPLOY_USER` | auto-deploy only | `deploy` | deploy job |
-| Secret | `DEPLOY_SSH_KEY` | auto-deploy only | the **private** key of a dedicated CI key pair, including the BEGIN/END lines | deploy job |
-| Secret | `DEPLOY_KNOWN_HOSTS` | optional, recommended | output of `ssh-keyscan -t ed25519 <static-ip>`, after you have checked its fingerprint | deploy job (without it: trust-on-first-use plus a warning) |
-| Variable | `ENABLE_AUTO_DEPLOY` | optional | `true` turns on the deploy job | `ci-main.yml` |
-| Variable | `DEPLOY_PATH` | optional | repository path on the server; default `/opt/devops-workshop` | deploy job |
-
-`ci-dev.yml` and `ci-test.yml` need **no secrets**, so they work on a fresh fork. Section 14 of
-[`deploy/gcp-vm-setup.md`](deploy/gcp-vm-setup.md#14-optional-automatic-deploys-from-github-actions)
-explains how to create the CI key pair and how to
-[pin the VM's host key](deploy/gcp-vm-setup.md#142-pin-the-servers-host-key).
+`ci-dev.yml` and `ci-test.yml` need **no secrets**, so they work on a fresh fork.
 
 > [!NOTE]
-> Forked the repository? Enable workflows in the **Actions** tab first. Add the Docker Hub secrets
-> **before** your first merge into `main`, otherwise CD (main) fails at "Log in to Docker Hub".
+> Forked the repository? Enable workflows in the **Actions** tab first, and add the two Docker Hub
+> secrets **before** your first merge into `main`, or CD (main) fails at "Log in to Docker Hub".
 
-#### 4.3 What each workflow does
+### 4.3 What each workflow does
 
 | Workflow (UI name) | Jobs | Highlights |
-|--------------------|------|-----------|
-| `ci-dev.yml` (**CI (dev)**) | 4 jobs (5 checks, because hadolint runs once per Dockerfile), in parallel | `npm ci` from the lockfile, ESLint, `node --test`, `vite build`, hadolint on both Dockerfiles, `shellcheck deploy/deploy.sh`, `docker compose config -q` on both files, plus a negative test that prod compose *refuses* to run without secrets |
-| `ci-test.yml` (**CI (test)**) | 1 job | builds both `production` targets, fails if an image runs as root, writes a throwaway `.env.ci` with random secrets, runs `docker compose -f docker-compose.prod.yml up -d --wait`, then the integration tests and curl smoke tests, dumps the logs on failure, and **always** runs `down -v` |
-| `ci-main.yml` (**CD (main)**) | `build` (matrix: backend, frontend) and an optional `deploy` | QEMU + Buildx build `linux/amd64,linux/arm64` (Compute Engine offers x86 VMs such as E2/N2 and Arm VMs: Tau T2A, Axion C4A), pushes `:latest` and `:sha-<7 chars>`, bakes the short SHA in as `APP_VERSION` / `VITE_APP_VERSION`, caches layers in the GitHub Actions cache per service. `deploy` SSHes in and runs `cd /opt/devops-workshop && git pull --ff-only && ./deploy/deploy.sh sha-<short>`, then curls the public `/api/health` |
+|--------------------|------|------------|
+| `ci-dev.yml` (**CI (dev)**) | 6 jobs in parallel (7 checks: hadolint runs per Dockerfile) | `npm ci` from the lockfile, ESLint, `node --test`, `vite build`, hadolint, `shellcheck` on every script, `docker compose config` on both files (and a test that prod compose *refuses* to start without secrets), the renewal timer's systemd units, the proxy config rendered in HTTP-only and HTTPS mode and checked with `nginx -t`, `ansible-lint` |
+| `ci-test.yml` (**CI (test)**) | 1 job | builds both `production` images and fails if one runs as root, runs the real `deploy/deploy.sh` (`SKIP_PULL=1`) with a throwaway `.env.prod`, checks that only the proxy publishes ports, runs the integration tests through the proxy over HTTP, switches to HTTPS with a self-signed certificate and tests again (redirect, HTTP/2, HSTS), and **always** tears everything down |
+| `ci-main.yml` (**CD (main)**) | `build` (backend, frontend) + optional `deploy` | QEMU + Buildx build `linux/amd64,linux/arm64`, push `:latest` and `:sha-<7 chars>`, bake the short SHA in as `APP_VERSION` / `VITE_APP_VERSION`. `deploy` (Stage 4, only with `ENABLE_AUTO_DEPLOY=true`) copies the bundle with `rsync`, runs `./deploy/deploy.sh sha-<short>` over SSH and checks the public `/api/health` |
 
-All workflows use `permissions: contents: read` (least privilege) and concurrency groups. CI runs
-cancel outdated runs; CD runs queue up and are never cancelled halfway through a release. You can
-also start any workflow by hand from the **Actions** tab (`workflow_dispatch`). The CD build job
-only pushes when it runs on `main`.
+All workflows use `permissions: contents: read` and concurrency groups: CI cancels outdated runs, CD
+runs queue up and are never cancelled halfway through a release. Every workflow can also be started
+by hand from the **Actions** tab.
 
-### Part 5: Provision the Google Cloud VM
+## Part 5: The deployment journey
 
-Follow **[`deploy/gcp-vm-setup.md`](deploy/gcp-vm-setup.md)**. It is the first of
-three guides, and each one links to the next. In short:
+Your laptop runs the game; now it goes live. You move the same production stack to a Google Cloud VM
+in five small stages. Each stage works end to end before the next one adds a single new idea: first
+everything by hand with `scp`, so you see every moving part, then automation, so you never have to do
+it by hand again.
 
-1. Select or create a Google Cloud project with **billing enabled**, enable the Compute Engine
-   API, install the `gcloud` CLI and set the defaults: region **`europe-west3`**, zone
-   **`europe-west3-a`**.
-2. [Reserve a static external IP](deploy/gcp-vm-setup.md#2-reserve-a-static-external-ip) named
-   **`devops-workshop-ip`**. The DNS record and the `DEPLOY_HOST` secret point at it, so it must
-   not change when the VM stops and starts (an *ephemeral* IP would).
-3. [Open ports 80 and 443](deploy/gcp-vm-setup.md#3-open-ports-80-and-443-vpc-firewall-rules) with
-   the VPC firewall rule **`allow-http-https`** (tcp:80,443) for VMs tagged `http-server` /
-   `https-server`. SSH on port 22 is already allowed by the default network's
-   `default-allow-ssh` rule. These rules filter in Google's network, *before* a packet reaches the
-   VM; there is no `ufw` on the VM. Docker-published ports would bypass a host firewall anyway,
-   which is why every container port binds to `127.0.0.1`.
-4. [Create the VM](deploy/gcp-vm-setup.md#4-create-the-vm) **`devops-workshop`**: machine type
-   **e2-small** (e2-medium for more headroom; the always-free e2-micro exists only in
-   `us-west1`, `us-central1` and `us-east1` and is tight for this stack), image family
-   `debian-13` from project `debian-cloud`, the static IP, and the network tags
-   `http-server,https-server`. Arm VMs (Tau T2A, Axion C4A) work too: the images are multi-arch.
-5. Log in with `gcloud compute ssh devops-workshop --zone=europe-west3-a`, update the system,
-   create a non-root **`deploy`** user, harden SSH, and turn on unattended security upgrades.
-6. Install Docker Engine from docker.com's apt repository, add `deploy` to the `docker` group
-   (be aware that this group is equivalent to root), and install nginx from Debian's apt.
-7. Clone the repo to **`/opt/devops-workshop`** and create **`.env.prod`**:
+| Stage | Goal | What you do | Result | Guide |
+|-------|------|-------------|--------|-------|
+| 1 | The app on a bare IP | create the VM, install Docker, `scp` three things, `docker compose up -d` | `http://<VM-IP>` | [Stage 1](deploy/stage-1-ip-http.md) |
+| 2 | A name for the site | add one Cloudflare A record, set `DOMAIN` | `http://devops.gulfheight.com` | [Stage 2](deploy/stage-2-domain-http.md) |
+| 3 | HTTPS | get a Let's Encrypt certificate with the certbot container, install the renewal timer | `https://devops.gulfheight.com` | [Stage 3](deploy/stage-3-https.md) |
+| 4 | Automated deploys | `deploy.sh`, a no-sudo `deploy` user, and GitHub Actions deploying every merge into `main` | the footer shows your merged commit | [Stage 4](deploy/stage-4-automated-deploys.md) |
+| 5 (optional) | The VM as code | one Ansible command provisions, or rebuilds, the VM with its data and certificate | the same site on a brand-new VM | [Stage 5](ansible/README.md) |
 
-   ```bash
-   cd /opt/devops-workshop
-   cp .env.prod.example .env.prod && chmod 600 .env.prod
-   sed -i -e "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 32)/" \
-          -e "s/^JWT_SECRET=.*/JWT_SECRET=$(openssl rand -hex 32)/" .env.prod
-   nano .env.prod                  # set DOCKER_HUB_USERNAME
-   ```
+Google Cloud details (machine types, static IP, firewall rules, IAP, costs and cleanup) are in the
+[Google Cloud reference](deploy/gcp-vm-setup.md).
 
-8. Run the first deploy with `./deploy/deploy.sh`. The app now runs on `127.0.0.1` only.
+### 5.1 How code and settings reach the VM
 
-> [!NOTE]
-> **Debian 12 "bookworm"** works too (image family `debian-12`). The main difference for this
-> repo is nginx 1.22, which does not know `http2 on;`. The production nginx config keeps the
-> nginx 1.22 alternative as a comment (see the troubleshooting table in Part 10).
+The VM never gets a Git checkout. It holds a small **deploy bundle** in `/opt/devops-workshop`
+(`docker-compose.prod.yml`, `.env.prod`, `deploy/`) and pulls ready-made images from Docker Hub.
 
-### Part 6: Cloudflare DNS
+```mermaid
+flowchart LR
+    LAPTOP["Your laptop<br/>docker-compose.prod.yml<br/>.env.prod, deploy/"]
+    GH["GitHub<br/>dev, test, main"]
+    GHA["GitHub Actions<br/>ci-dev, ci-test, ci-main"]
+    HUB[("Docker Hub<br/>bugsquash-backend<br/>bugsquash-frontend")]
+    VM["VM devops<br/>/opt/devops-workshop"]
 
-Follow **[`deploy/cloudflare-dns-guide.md`](deploy/cloudflare-dns-guide.md)**.
+    LAPTOP -->|"git push"| GH
+    GH -->|"push / pull request"| GHA
+    GHA -->|"docker push :latest, :sha-xxxxxxx"| HUB
+    HUB -->|"docker compose pull"| VM
+    LAPTOP -->|"stages 1-3: scp, by hand"| VM
+    GHA -->|"stage 4: rsync the bundle,<br/>ssh ./deploy/deploy.sh"| VM
+    LAPTOP -.->|"stage 5, optional:<br/>ansible/provision.sh"| VM
+```
 
-1. In the Cloudflare dashboard, open the zone `gulfheight.com` -> **DNS -> Records -> Add record**:
-   type `A`, name `devops`, IPv4 = the VM's **static external IP** (`devops-workshop-ip`),
-   **Proxy status: DNS only (gray cloud)**, TTL Auto. Do **not** add an AAAA record: a VM in the
-   default VPC network has no IPv6 address.
-2. Verify from your laptop: `dig +short devops.gulfheight.com @1.1.1.1` must print that static IP.
-   Print the IP with
-   `gcloud compute addresses describe devops-workshop-ip --region=europe-west3 --format='get(address)'`.
+The same in plain text:
 
-Stay on the **gray cloud** while you get the certificate. You may switch to the orange cloud
-afterwards, but then the SSL/TLS mode **must** be **Full (strict)**. **Flexible** causes an
-endless redirect loop. The guide explains why, and also how to restore real client IPs behind the
-orange cloud.
+```text
+                       stages 1-3: scp, by hand
+  +------------+ ---------------------------------------------> +----------------------+
+  | laptop     |   stage 5 (optional): ansible/provision.sh     | VM "devops"          |
+  |            | ---------------------------------------------> | /opt/devops-workshop |
+  +------------+                                                +----------------------+
+        | git push                                                 ^              ^
+        v                                                          |              |
+  +------------+  push / PR   +----------------+  stage 4: rsync   |              |
+  | GitHub     | -----------> | GitHub Actions | ------------------'              |
+  +------------+              +----------------+  + ssh deploy.sh                 |
+                                      | docker push                               |
+                                      v                                           |
+                              +----------------+  docker compose pull             |
+                              | Docker Hub     | ---------------------------------'
+                              +----------------+
+```
 
-> [!TIP]
-> Create the DNS record as soon as you have reserved the static IP (Part 5, step 2). The IP never
-> changes, so propagation happens while you finish Part 5.
+`.env.prod` (the secrets) travels only from your laptop, or from Ansible's encrypted vault in Stage 5.
+CI never sees it.
 
-### Part 7: HTTPS with Let's Encrypt
+### 5.2 How a request reaches the app
 
-Follow **[`deploy/letsencrypt-setup.md`](deploy/letsencrypt-setup.md)**. This involves a
-chicken-and-egg problem: the production nginx config refers to a certificate that does not exist
-yet. To get the certificate, Let's Encrypt must reach nginx on port 80, so you start with a
-**bootstrap** config:
+```mermaid
+flowchart LR
+    B(["Browser"])
+    FW{{"Google VPC firewall<br/>tcp 22, 80, 443"}}
+    CF["Cloudflare DNS<br/>A record, grey cloud"]
+    subgraph VM["VM devops: Debian 13, only Docker installed"]
+        PX["proxy<br/>nginx:1.27-alpine<br/>publishes :80 and :443"]
+        FE["frontend<br/>nginx-unprivileged :8080"]
+        BE["backend<br/>Express :3000"]
+        DB[("db<br/>postgres 17 :5432")]
+        CB["certbot<br/>one-off container"]
+        LE[("volume<br/>letsencrypt")]
+    end
+    B ==>|"2. HTTP / HTTPS<br/>to the VM's IP"| FW
+    FW ==> PX
+    B -.->|"1. where is<br/>devops.gulfheight.com?"| CF
+    PX ==>|"/"| FE
+    PX ==>|"/api/"| BE
+    BE ==>|"network data<br/>(internal)"| DB
+    CB -->|"writes certificates"| LE
+    LE -.->|"read-only"| PX
+```
+
+The same in plain text:
+
+```text
+ browser --1. "devops.gulfheight.com?"--> Cloudflare DNS: A record -> 34.118.95.243 (grey cloud)
+    |
+    | 2. http://... (port 80) or https://... (port 443)
+    v
+ Google VPC firewall: tcp 22, 80, 443 only (runs outside the VM)
+    |
+    v
+ +- VM "devops": only Docker is installed -------------------------------------------+
+ |                                                                                   |
+ |  proxy  nginx:1.27-alpine, the ONLY container that publishes ports (80, 443)      |
+ |    |-- /      --> frontend:8080  nginx-unprivileged, the built Vite pages         |
+ |    '-- /api/  --> backend:3000   Express API                                      |
+ |                     '--> db:5432  postgres 17, internal network "data"            |
+ |                                                                                   |
+ |  certbot (one-off, stage 3+) --writes--> volume letsencrypt --read-only--> proxy  |
+ +-----------------------------------------------------------------------------------+
+```
+
+- **One way in.** Only the proxy publishes ports. The other containers talk over private Docker
+  networks, and the database's network (`data`, `internal: true`) has no route to the internet at all.
+- **No web server on the host.** nginx and certbot are containers too; the VM itself only runs Docker
+  (and SSH). The proxy picks its own config at every start: HTTP-only until a certificate exists,
+  HTTPS after that ([`select-site-config.sh`](deploy/nginx/select-site-config.sh)).
+- **The firewall sits outside the VM.** Docker's published ports bypass a host firewall such as
+  `ufw`, so the VM has none: Google's VPC firewall is the real gate.
+
+### 5.3 Ports
+
+| Port | Listener | Published on the VM? | Reachable by |
+|------|----------|----------------------|--------------|
+| 80 | proxy | **yes** | the internet: the app in stages 1-2; from Stage 3 the redirect to HTTPS, `/healthz` and Let's Encrypt challenges |
+| 443 | proxy | **yes** | the internet: the app, from Stage 3 on |
+| 8080 | frontend | no | the proxy, over the `edge` network |
+| 3000 | backend | no | the proxy and the frontend, over `edge` |
+| 5432 | db | no | the backend only, over the internal `data` network |
+| 22 | sshd on the VM (not Docker) | - | you, the CI deploy job (Stage 4) and Ansible (Stage 5) |
+
+Check it from your laptop: `curl -m 5 http://<VM-IP>:3000/api/health` must time out.
+
+### 5.4 Environments at a glance
+
+|  | Local dev | CI (`ci-test.yml`) | Production |
+|--|-----------|--------------------|------------|
+| Compose file | `docker-compose.yml` | `docker-compose.prod.yml` | `docker-compose.prod.yml` |
+| Project name | `bugsquash-dev` | `bugsquash` | `bugsquash` |
+| Images | built locally (`dev` targets) | built in the job (`production`), tagged `local/bugsquash-*:ci` | pulled from Docker Hub: `<user>/bugsquash-*:<tag>` |
+| Settings | `.env` (optional) | a throwaway `.env.prod` with random secrets | `.env.prod` (`chmod 600`), master copy on your laptop |
+| Source code | bind-mounted, hot reload | baked into the image | baked into the image |
+| Entry URL | http://localhost:5173 | http://localhost, then https://localhost | https://devops.gulfheight.com |
+| Published ports | 5173, 3000, 5432 (on `127.0.0.1`) | 80, 443 | 80, 443 |
+
+### 5.5 Everyday commands on the VM
 
 ```bash
 cd /opt/devops-workshop
-sudo apt install -y certbot python3-certbot-nginx
-sudo mkdir -p /var/www/certbot
-
-# 1. HTTP-only bootstrap config (already proxies the app on port 80)
-sudo cp deploy/nginx/bootstrap/devops.gulfheight.com.http-only.conf /etc/nginx/conf.d/devops.gulfheight.com.conf
-sudo nginx -t && sudo systemctl reload nginx
-
-# 2. Obtain the certificate (add --staging while experimenting)
-sudo certbot --nginx -d devops.gulfheight.com
-
-# 3. Swap in the full production config (TLS, HTTP/2, HSTS, security headers, keepalive upstreams)
-sudo cp deploy/nginx/conf.d/devops.gulfheight.com.conf /etc/nginx/conf.d/devops.gulfheight.com.conf
-sudo nginx -t && sudo systemctl reload nginx
-
-# 4. Prove that automatic renewal will work
-sudo certbot renew --dry-run
-```
-
-The production config redirects port 80 to HTTPS, except for `/.well-known/acme-challenge/`, which
-is served from `/var/www/certbot`. On 443 it proxies `/api/` to `127.0.0.1:3000` and `/` to
-`127.0.0.1:8080`. The certificate files are in `/etc/letsencrypt/live/devops.gulfheight.com/`.
-
-### Part 8: Deploy, pin and roll back
-
-All deploys go through one script, [`deploy/deploy.sh`](deploy/deploy.sh). Run it on the server as
-the `deploy` user:
-
-```bash
-gcloud compute ssh devops-workshop --zone=europe-west3-a   # log in to the VM (your admin account)
-sudo -iu deploy                     # switch to the deploy user (or: ssh deploy@<static-ip>)
-cd /opt/devops-workshop
-git pull --ff-only                  # deploy.sh and docker-compose.prod.yml live in the repo
-
-./deploy/deploy.sh                  # deploy IMAGE_TAG from .env.prod (default: latest)
-./deploy/deploy.sh sha-1a2b3c4      # deploy an exact, immutable build
-./deploy/deploy.sh --help
-```
-
-The script runs seven steps, and it is safe to run again:
-
-1. **Pre-flight:** checks Docker, Compose, the daemon, `curl` and `.env.prod`. It warns if
-   `.env.prod` is readable by other users, and takes a lock so two deploys cannot run at once.
-2. **Validate:** runs `docker compose config -q`. A missing secret stops the deploy here, while
-   the old version is still serving.
-3. **Pull:** only changed layers are downloaded.
-4. **Up:** `up -d --remove-orphans --wait`. Compose recreates only the containers that changed and
-   waits until their healthchecks pass. On failure the script prints the logs and a rollback command.
-5. **Smoke tests:** `127.0.0.1:3000/api/health`, `127.0.0.1:8080/healthz` and
-   `127.0.0.1:8080/api/health` (the frontend reaching the backend over Docker DNS).
-6. **Clean up:** `docker image prune -f` removes dangling images. Older `sha-*` images are kept,
-   so a rollback is instant.
-7. **Status:** prints a table of the running services.
-
-**Why pin a `sha-` tag?** `latest` is a *moving* tag: after a pull it points to the new build, so it
-cannot take you back. A `sha-<commit>` tag always means exactly one build. The CI deploy job always
-deploys the `sha-` tag of the commit it just built.
-
-To find a tag, use any of these:
-
-- the run summary of **CD (main)**, which prints `./deploy/deploy.sh sha-xxxxxxx`;
-- the **Tags** tab of the Docker Hub repository;
-- `git log --oneline main` (the tag uses the first 7 characters of the commit hash).
-
-**Rolling back:**
-
-```bash
-./deploy/deploy.sh sha-<previous-good-commit>
-```
-
-- The database volume is untouched. The schema is created with `CREATE TABLE IF NOT EXISTS`, so
-  older code still works with it. Real projects need backward-compatible migrations for this to
-  hold.
-- A rollback lasts until the next deploy. A plain `./deploy/deploy.sh` goes back to `IMAGE_TAG`
-  from `.env.prod`, and with auto-deploy on, the next push to `main` ships again. To pin a version,
-  set `IMAGE_TAG=sha-...` in `.env.prod`. The usual long-term fix is to `git revert` the bad commit
-  on `dev` and promote it ("fix forward").
-
-**Automatic deploys:** add the `DEPLOY_HOST`, `DEPLOY_USER` and `DEPLOY_SSH_KEY` secrets (plus
-the recommended `DEPLOY_KNOWN_HOSTS`) and set the variable `ENABLE_AUTO_DEPLOY=true`
-(see [Part 4](#part-4-github-actions-and-secrets)). The deploy job runs in the GitHub environment
-**`production`**. Under *Settings -> Environments -> production* you can add **required reviewers**
-so that every release waits for a manual approval click.
-
-Day-2 shortcut on the server:
-
-```bash
 alias dc='docker compose -f docker-compose.prod.yml --env-file .env.prod'
-dc ps                                     # state + health
-dc logs -f --tail=100 backend             # follow the backend logs
+dc ps                                     # state + health of each container
+dc logs -f --tail=100 backend             # follow the backend's output
 dc exec db psql -U bugsquash bugsquash    # SQL shell (the db port is not published)
-dc exec -T db pg_dump -U bugsquash bugsquash | gzip > ~/backup-$(date +%F).sql.gz
-docker stats                              # memory vs the cgroup limits (512M / 256M / 64M)
+docker stats --no-stream                  # memory against the cgroup limits
+./deploy/tls.sh status                    # certificate and proxy mode (Stage 3+)
+./deploy/deploy.sh sha-1a2b3c4            # deploy or roll back to an exact build (Stage 4+)
 ```
 
-### Part 9: Verify the deployment
-
-From your laptop:
-
-```bash
-curl -s https://devops.gulfheight.com/api/health; echo
-# {"status":"ok","db":"up","version":"1a2b3c4","uptime":42}
-#                                     ^^^^^^^ the short SHA of the commit that CI built
-
-curl -sI http://devops.gulfheight.com/ | head -n 3        # 301 -> https://devops.gulfheight.com/
-curl -sI https://devops.gulfheight.com/ | grep -iE '^(HTTP|strict-transport)'
-curl -m 5 http://<static-ip>:3000/api/health              # MUST fail: VPC firewall + loopback-only port
-```
-
-Then open **https://devops.gulfheight.com** in your browser. The page **footer** shows two versions:
-
-- **Web** is the `VITE_APP_VERSION` baked into the JavaScript bundle at build time.
-- **API** is the `version` reported by the running backend's `/api/health`, together with a
-  healthy / database down / offline indicator.
-
-Both should match the first 7 characters of the commit you merged into `main`
-(`git log -1 --format=%h main`). Push a change, watch CD (main) go green, reload the page, and you
-can **see** the new deploy arrive.
-
-On the server:
-
-```bash
-dc ps                                            # all three services "healthy"
-sudo ss -tlnp | grep -E ':(3000|8080)\b'         # must show 127.0.0.1, never 0.0.0.0
-sudo certbot certificates                        # certificate and expiry date
-```
-
-### Part 10: Troubleshooting
+## Part 6: Troubleshooting
 
 **Local development**
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `Bind for 127.0.0.1:5432 failed: port is already allocated` or `address already in use` | a local Postgres or another stack already uses the port | find it with `sudo ss -ltnp 'sport = :5432'` (Linux) or `lsof -i :5432` (macOS); set `POSTGRES_HOST_PORT=5433` in `.env`. For 3000, 5173 or 8080, stop the other process or the other stack (`docker ps`) |
+| `Bind for 127.0.0.1:5432 failed: port is already allocated` | a local Postgres or another stack uses the port | find it with `sudo ss -ltnp 'sport = :5432'` (Linux) or `lsof -i :5432` (macOS); set `POSTGRES_HOST_PORT=5433` in `.env`. Same idea for 3000, 5173, and for 80 in the rehearsal (2.6) |
 | Edits are not picked up (macOS / Windows) | file events do not cross Docker Desktop's VM | `VITE_USE_POLLING=true docker compose up` |
-| Vite fails after changing `package.json` | the anonymous `node_modules` volume still holds the old dependencies | `docker compose up --build --renew-anon-volumes` |
-| `npm ci` on the host fails with `EACCES` in `app/frontend` (Linux) | Docker created an empty, root-owned `app/frontend/node_modules` as the mount point for the anonymous volume | `rmdir app/frontend/node_modules`, then run `npm ci` again |
-| backend logs `password authentication failed for user "bugsquash"` | `POSTGRES_PASSWORD` changed after the volume was created (the password is applied on first start only) | dev: `docker compose down -v && docker compose up --build` (deletes local data) |
-| `permission denied while trying to connect to the Docker daemon socket` | your user is not in the `docker` group, or you have not logged in again since being added | `sudo usermod -aG docker $USER`, then log out and back in |
-| `429` "Too many attempts. The bugs need a break too" | auth rate limit (30 per 15 min per IP), e.g. from many integration test runs | wait, raise `AUTH_RATE_LIMIT_MAX` in `.env`, or `docker compose restart backend` |
+| Vite fails after changing `package.json` | the anonymous `node_modules` volume holds the old dependencies | `docker compose up --build --renew-anon-volumes` |
+| backend logs `password authentication failed for user "bugsquash"` | `POSTGRES_PASSWORD` changed after the volume was created | dev: `docker compose down -v && docker compose up --build` (deletes local data) |
+| `permission denied while trying to connect to the Docker daemon socket` | your user is not in the `docker` group yet | `sudo usermod -aG docker $USER`, then log out and back in |
+| `429` "Too many attempts. The bugs need a break too" | auth rate limit (30 per 15 min per IP) | wait, raise `AUTH_RATE_LIMIT_MAX` in `.env`, or `docker compose restart backend` |
 
 **CI/CD**
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| CD (main): `Username and password required` at "Log in to Docker Hub" | `DOCKER_HUB_USERNAME` / `DOCKER_HUB_ACCESS_TOKEN` missing, misspelled, or created as *variables* instead of *secrets* | add them as repository **secrets** with exactly these names |
-| CD (main): `denied: requested access to the resource is denied` on push | token is read-only, or the username does not own the token | create a **Read & Write** token for the same account |
-| CI (dev): hadolint or shellcheck fails | a Dockerfile or shell best-practice rule (e.g. `DL3018`, `SC2086`) | fix it, or add a justified `# hadolint ignore=DLxxxx` comment above the line |
+| CD (main): `Username and password required` at "Log in to Docker Hub" | Docker Hub secrets missing, misspelled, or created as *variables* | add `DOCKER_HUB_USERNAME` and `DOCKER_HUB_ACCESS_TOKEN` as repository **secrets** |
+| CD (main): `denied: requested access to the resource is denied` | read-only token, or a token from another account | create a **Read & Write** token for the same account |
+| CI (dev): hadolint or shellcheck fails | a best-practice rule such as `DL3018` or `SC2086` | fix it, or add a justified `# hadolint ignore=DLxxxx` above the line |
 | CI (test): "runs as root" | a Dockerfile lost its non-root `USER` line | restore `USER 1000:1000` (backend) / `USER 101` (frontend) |
-| CI (test): `up --wait` fails | a container crashed or its healthcheck failed | read the "Dump container state and logs" step |
-| Deploy job: `Permission denied (publickey)` | CI public key not in `~deploy/.ssh/authorized_keys`, wrong `DEPLOY_USER`, or private key pasted without its BEGIN/END lines | see [section 14 of the GCP VM guide](deploy/gcp-vm-setup.md#14-optional-automatic-deploys-from-github-actions) |
-| Deploy job: `Host key verification failed` | `DEPLOY_KNOWN_HOSTS` is stale (for example, the VM was deleted and recreated, which creates new host keys) | regenerate it with `ssh-keyscan`, compare the fingerprint, update the secret |
-| Deploy job: `ssh: connect to host ... port 22: Connection timed out` | `DEPLOY_HOST` is the domain (the orange cloud does not proxy SSH) or an old ephemeral IP, or `default-allow-ssh` was deleted or limited to your own IP (GitHub-hosted runners connect from many changing addresses) | set `DEPLOY_HOST` to the static IP; check `gcloud compute firewall-rules list` |
-| Deploy job: `fatal: Not possible to fast-forward, aborting.` | someone edited tracked files or committed on the server | run `git status` on the server, discard or stash the changes, and keep server config in `.env.prod` only |
+| CI (test): a deploy step fails | a container crashed or a healthcheck failed | read the "Dump container state and logs" step |
+| Deploy job fails (SSH, host key, rsync) | Stage 4 setup | [Stage 4 troubleshooting](deploy/stage-4-automated-deploys.md#troubleshooting) |
 
-**Server, nginx, TLS, DNS**
+**On the server**
+
+| You are stuck at... | Look here |
+|---------------------|-----------|
+| creating the VM, SSH, installing Docker, the first `up -d` | [Stage 1 troubleshooting](deploy/stage-1-ip-http.md#troubleshooting) |
+| the DNS record, `dig` | [Stage 2 troubleshooting](deploy/stage-2-domain-http.md#troubleshooting) |
+| certbot, the redirect, the padlock, renewals | [Stage 3 troubleshooting](deploy/stage-3-https.md#troubleshooting) |
+| `deploy.sh`, the CI deploy, rollbacks | [Stage 4 troubleshooting](deploy/stage-4-automated-deploys.md#troubleshooting) |
+| firewall rules, the static IP, quotas, costs | [Google Cloud reference](deploy/gcp-vm-setup.md#troubleshooting) |
+
+A few symptoms that can appear in any stage:
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| nginx-branded **502 Bad Gateway** | the containers are down or still starting, so the host nginx cannot reach `127.0.0.1:3000/8080` | `dc ps`, `dc logs --tail=100 backend`, `./deploy/deploy.sh`; `sudo tail /var/log/nginx/devops.gulfheight.com.error.log` (look for `connect() failed (111: Connection refused)`) |
-| `/api/health` returns **503** `"db":"down"` | Postgres is unhealthy, or the password in `.env.prod` no longer matches the volume | `dc logs db`; after changing `POSTGRES_PASSWORD`, also run `ALTER USER` in psql |
-| `required variable POSTGRES_PASSWORD is missing a value` | empty secret in `.env.prod`, or a compose command run without `--env-file .env.prod` | fill in `.env.prod`; always use `deploy.sh` or the `dc` alias |
-| `pull access denied ... repository does not exist` or `manifest unknown` | wrong `DOCKER_HUB_USERNAME`, private repository, or that tag was never pushed | check Docker Hub; for private repos, `docker login` with a read-only token |
-| `exec format error` or `no matching manifest for linux/arm64` | image built for another CPU architecture (e.g. pushed by hand from an x86 laptop) | let CD (main) build it (amd64 + arm64) |
-| Login does not stick (you bounce back to the login page) | `COOKIE_SECURE=true` while serving plain HTTP, so the browser drops the cookie | use HTTPS; set `false` only for plain-HTTP tests |
-| deploy.sh: "Containers did not become healthy" | crash on startup (missing `JWT_SECRET`, database auth) or out of memory | read the printed logs; `docker inspect --format '{{.State.OOMKilled}}' <container>` |
-| `nginx -t`: `cannot load certificate "/etc/letsencrypt/live/..."` | the production config was installed before the certificate existed | go back to the bootstrap config (Part 7, step 1) |
-| `nginx -t`: `unknown directive "http2"` | Debian 12 (nginx 1.22) | use `listen 443 ssl http2;` instead of `http2 on;` (commented in the config) |
-| certbot: `Timeout during connect (likely firewall problem)` | port 80 blocked by the VPC firewall (rule `allow-http-https` missing, or the VM lacks the `http-server` tag), or DNS points elsewhere | see the next row; `dig +short devops.gulfheight.com @1.1.1.1`; also check for a stray **AAAA** record |
-| Site unreachable from outside (browser and `curl` time out), although nginx runs and `curl -I http://127.0.0.1/` on the VM answers | VPC firewall rule `allow-http-https` missing or disabled, or the VM lacks the `http-server` / `https-server` network tags the rule targets | `gcloud compute firewall-rules describe allow-http-https`; `gcloud compute instances describe devops-workshop --zone=europe-west3-a --format='value(tags.items)'`; add the tags with `gcloud compute instances add-tags devops-workshop --zone=europe-west3-a --tags=http-server,https-server` |
-| The IP changed after a VM stop/start: DNS and `DEPLOY_HOST` point to an address the VM no longer has | the VM used an **ephemeral** external IP, which is released on every stop | reserve a static one: promote the current IP with `gcloud compute addresses create devops-workshop-ip --addresses=<current-ip> --region=europe-west3`, then update the A record and `DEPLOY_HOST` |
-| certbot: `NXDOMAIN` / wrong IP | DNS record missing or not propagated | [Cloudflare guide](deploy/cloudflare-dns-guide.md#8-troubleshooting), section 8 |
-| **ERR_TOO_MANY_REDIRECTS** | Cloudflare orange cloud with SSL mode **Flexible** | SSL/TLS -> **Full (strict)** |
-| Cloudflare error **521 / 522 / 526** | VM stopped, nginx down, VPC firewall blocking Cloudflare, or invalid or expired origin certificate | `gcloud compute instances list` (STATUS must be `RUNNING`), `systemctl status nginx`, `sudo certbot certificates` |
-| SSH to `devops.gulfheight.com` hangs | the orange cloud does not proxy SSH | SSH to the IP address instead |
-
-More detailed tables are in the [Let's Encrypt guide](deploy/letsencrypt-setup.md#8-troubleshooting)
-and the [Cloudflare guide](deploy/cloudflare-dns-guide.md#8-troubleshooting).
-
----
+| **502 Bad Gateway** from nginx | backend or frontend down or still starting | `dc ps`, `dc logs --tail=100 backend proxy` (the `dc` alias from 5.5) |
+| `/api/health` returns **503** `"db":"down"` | Postgres unhealthy, or `POSTGRES_PASSWORD` no longer matches the volume | `dc logs db`; after changing the password, also run `ALTER USER` in psql |
+| Login does not stick (you bounce back to the login page) | `COOKIE_SECURE=true` while the site is still plain HTTP | `COOKIE_SECURE=false` until Stage 3 ([Stage 1, step 5](deploy/stage-1-ip-http.md#5-create-envprod-on-your-laptop)) |
+| `pull access denied` or `manifest unknown` | wrong `DOCKER_HUB_USERNAME`, or that tag was never pushed | check the tags on Docker Hub |
+| `exec format error` | image built for another CPU (for example pushed by hand from a laptop) | let CD (main) build it: it builds amd64 and arm64 |
 
 ## API reference
 
-All requests and responses are JSON, and errors look like `{"error": "<message>"}`. Auth uses the
-**`bugsquash_token`** cookie, a JWT `{sub: userId, username}` with these attributes:
-
-- `HttpOnly`, `SameSite=Lax`, `Path=/`;
-- `Secure` when `COOKIE_SECURE=true`;
-- `Max-Age` equal to the JWT lifetime.
+All requests and responses are JSON; errors look like `{"error": "<message>"}`. Auth uses the
+**`bugsquash_token`** cookie: a JWT `{sub: userId, username}`, `HttpOnly`, `SameSite=Lax`, `Path=/`,
+`Secure` when `COOKIE_SECURE=true`, and `Max-Age` equal to the JWT lifetime.
 
 | Method | Path | Auth | Request body | Success | Errors |
 |--------|------|------|--------------|---------|--------|
@@ -912,14 +637,14 @@ All requests and responses are JSON, and errors look like `{"error": "<message>"
 
 Validation rules:
 
-- **Usernames** are 3-20 characters of `[a-zA-Z0-9_]` and unique case-insensitively (a unique
-  index on `LOWER(username)`).
-- **Passwords** are 8-72 characters and at most 72 bytes, because bcrypt ignores anything longer.
-  They are hashed with bcryptjs at cost 10.
-- **Scores** are integers from 0 to **200** (`MAX_SCORE`), checked on the server.
-- **Requests:** malformed JSON gets `400`, and bodies over 10 kB get `413`.
-- **Rate limit:** signup and login allow `AUTH_RATE_LIMIT_MAX` requests (default 30) per 15
-  minutes per IP.
+- **Usernames:** 3-20 characters of `[a-zA-Z0-9_]`, unique case-insensitively (unique index on
+  `LOWER(username)`).
+- **Passwords:** 8-72 characters and at most 72 bytes (bcrypt ignores anything longer), hashed with
+  bcryptjs at cost 10.
+- **Scores:** integers from 0 to **200** (`MAX_SCORE`), checked on the server.
+- **Requests:** malformed JSON gets `400`, bodies over 10 kB get `413`.
+- **Rate limit:** signup and login allow `AUTH_RATE_LIMIT_MAX` requests (default 30) per 15 minutes
+  per IP.
 
 Try it against the dev stack:
 
@@ -933,99 +658,93 @@ curl -s -b $JAR http://localhost:3000/api/scores/me; echo
 curl -s http://localhost:3000/api/scores/leaderboard; echo
 ```
 
----
-
 ## Environment variables
 
 | Variable | Used by | Dev default (`docker-compose.yml`) | Production (`.env.prod`) | Notes |
 |----------|---------|------------------------------------|--------------------------|-------|
+| `DOCKER_HUB_USERNAME` | prod compose image names | | **required** | `alhuraibisaeed` for the course images, or your own account (Part 4) |
+| `IMAGE_TAG` | prod compose | | `latest` | `./deploy/deploy.sh <tag>` overrides it for one deploy |
+| `DOMAIN` | proxy, `tls.sh` | | empty in Stage 1, then `devops.gulfheight.com` | the certificate is requested for exactly this name |
+| `LETSENCRYPT_EMAIL` | `tls.sh` | | optional | empty = register without an e-mail address |
 | `POSTGRES_DB` | db; backend as `PGDATABASE` | `bugsquash` | `bugsquash` | applied when the volume is first created |
 | `POSTGRES_USER` | db; backend as `PGUSER` | `bugsquash` | `bugsquash` | applied when the volume is first created |
 | `POSTGRES_PASSWORD` | db; backend as `PGPASSWORD` | `bugsquash-dev-password` | **required** (`openssl rand -hex 32`) | changing it later also needs `ALTER USER` |
 | `POSTGRES_HOST_PORT` | dev compose only | `5432` | | host port for psql or GUI clients |
-| `JWT_SECRET` | backend | `dev-only-insecure-secret-change-me` | **required** | the backend refuses to start without it when `NODE_ENV=production`; rotating it logs everyone out |
+| `JWT_SECRET` | backend | `dev-only-insecure-secret-change-me` | **required** | rotating it logs everyone out |
 | `JWT_EXPIRES_IN` | backend | `7d` | `7d` | `60s`, `15m`, `12h`, `7d`; a bare number means seconds |
-| `COOKIE_SECURE` | backend | `false` | `true` | `true` = cookie sent over HTTPS only |
+| `COOKIE_SECURE` | backend | `false` | `false` in stages 1-2, `true` from Stage 3 | `true` = the cookie travels over HTTPS only |
 | `AUTH_RATE_LIMIT_MAX` | backend | `30` | `30` | signup and login attempts per IP per 15 min |
 | `APP_VERSION` | backend | `dev` | *not set*: baked into the image by CI (short SHA) | shown in `/api/health` and the footer |
 | `VITE_APP_VERSION` | frontend build arg | `dev` | baked in by CI (short SHA) | shown in the footer as "Web" |
 | `VITE_USE_POLLING` | Vite dev server | `false` | | `true` on Docker Desktop if hot reload misses edits |
 | `VITE_API_PROXY_TARGET` | Vite dev server | `http://backend:3000` (set by compose) | | `vite.config.js` falls back to `http://localhost:3000` |
-| `DOCKER_HUB_USERNAME` | prod compose image names | | **required** | `<user>/bugsquash-backend`, `<user>/bugsquash-frontend` |
-| `IMAGE_TAG` | prod compose | | `latest` | `./deploy/deploy.sh <tag>` overrides it for one deploy |
 
-Set by the compose files, not by you: `NODE_ENV`, `PORT=3000`, `PGHOST=db`, `PGPORT=5432`.
+Set by the Compose files, not by you: `NODE_ENV`, `PORT=3000`, `PGHOST=db`, `PGPORT=5432`.
 
 Tool-only variables:
 
-- `BASE_URL` for the integration tests (default `http://localhost:8080`), and `API_ONLY=1` when
-  `BASE_URL` is the bare API (for example `http://localhost:3000`);
-- `WAIT_TIMEOUT` (default 180 s), `NO_COLOR` and `SKIP_PULL=1` for `deploy/deploy.sh`.
+- integration tests: `BASE_URL` (default `http://localhost`, the production stack's proxy) and
+  `API_ONLY=1` when `BASE_URL` is the bare API;
+- `deploy/deploy.sh`: `WAIT_TIMEOUT` (180 s), `LOCK_TIMEOUT` (300 s), `NO_COLOR`, `SKIP_PULL=1`;
+- `deploy/tls.sh`: `FORCE=1` (skip the DNS check), `LOCK_TIMEOUT` (600 s), `NO_COLOR`.
 
----
-
-## Make it your own: exercises and stretch goals
+## Make it your own
 
 **Warm-up: follow one change all the way to production**
 
-1. Add a new rank title in `app/frontend/src/js/ranks.js`, or change the anti-cheat message in
-   `app/backend/src/validation.js`. Watch hot reload pick it up locally.
-2. Push to `dev`, then promote it `dev -> test -> main`. Watch all three workflows run.
-3. Confirm the new short SHA in the footer and in `/api/health`. Then roll back with
+1. Add a rank title in `app/frontend/src/js/ranks.js`, or change the anti-cheat message in
+   `app/backend/src/validation.js`. Watch hot reload pick it up.
+2. Push to `dev` and promote it `dev -> test -> main`. Watch all three workflows run.
+3. Find the new short SHA in the footer and in `/api/health`, then roll back with
    `./deploy/deploy.sh sha-<previous>` and watch the footer change back.
 
 **Containers and Linux** (pair these with [the theory chapter](docs/containers-deep-dive.md))
 
-Run these in the production stack, for example the local rehearsal from
-[Part 2.6](#26-rehearse-the-production-stack-locally-optional), with
-`alias dc='docker compose -f docker-compose.prod.yml --env-file .env.ci'`.
+Use the local production rehearsal from [2.6](#26-rehearse-the-production-stack-locally-optional)
+with `alias dc='docker compose -f docker-compose.prod.yml --env-file .env.ci'`.
 
 - **PID 1 and signals.** Comment out the two `process.on('SIGTERM' / 'SIGINT')` lines in
-  `app/backend/src/server.js`, rebuild the production image and run `time dc stop backend`. Then
-  check `docker inspect -f '{{.State.ExitCode}}' bugsquash-backend-1`. Use what you know about
-  PID 1 and SIGKILL to explain the 10 seconds and the exit code 137. Then try a shell-form
-  `CMD node src/server.js; echo bye`.
-- **cgroups.** Lower the backend memory limit to `32M`. Watch `docker stats`, and check
+  `app/backend/src/server.js`, rebuild, and run `time dc stop backend`. Explain the 10 seconds and
+  `docker inspect -f '{{.State.ExitCode}}' bugsquash-backend-1` (137) with PID 1 and SIGKILL.
+- **cgroups.** Lower the backend memory limit to `32M`, watch `docker stats`, and check
   `docker inspect -f '{{.State.OOMKilled}}' bugsquash-backend-1`.
-- **Network isolation.** Run `dc exec frontend wget -T 3 -O- http://db:5432` and compare it with the
-  same command from the backend. Explain the difference with `docker network inspect bugsquash_data`.
-- **Read-only root filesystem.** `dc exec backend touch /home/node/x` fails even though the `node`
-  user owns that directory, while `dc exec backend touch /tmp/x` works. Explain both results with
-  overlay layers and tmpfs.
+- **Network isolation.** Run `dc exec frontend wget -T 3 -O- http://db:5432`, then the same from the
+  backend. Explain the difference with `docker network inspect bugsquash_data`.
+- **Read-only root filesystem.** `dc exec backend touch /home/node/x` fails although `node` owns that
+  folder, while `dc exec backend touch /tmp/x` works. Explain both with overlay layers and tmpfs.
+- **Two users in one container.** `dc exec proxy ps -o user,args` shows a root master and `nginx`
+  workers. Why does the proxy need both (hint: certbot's private keys are `0600`)?
 
 **Features (touch every layer: API, unit test, integration test, UI)**
 
 - Add `GET /api/scores/stats` (total games, total bugs squashed) and show it on the landing page.
-- Add a "daily leaderboard" (`WHERE created_at > now() - interval '1 day'`). Think about which index
-  it needs.
-- Move the round length (`ROUND_MS` in `game.js`) into a server-provided config, and make the
+- Add a "daily leaderboard" (`WHERE created_at > now() - interval '1 day'`). Which index does it need?
+- Move the round length (`ROUND_MS` in `game.js`) into server-provided config, and make the
   anti-cheat limit depend on it.
 
 **DevOps stretch goals**
 
-- **Backups.** Run a nightly `pg_dump` from cron or a systemd timer, copy it off the VM
-  (for example to a Cloud Storage bucket with `gcloud storage cp`), add a snapshot schedule for
-  the VM's boot disk, and practise a **restore**.
-- **Security scanning.** Add a Trivy or Docker Scout step to `ci-test.yml` that fails on critical
-  CVEs. Enable Dependabot for npm, GitHub Actions and Dockerfiles. Pin actions by commit SHA.
-- **Monitoring.** Point an uptime checker (e.g. Uptime Kuma) at `/api/health`. Add a Prometheus
-  `/metrics` endpoint and a Grafana dashboard.
-- **Staging.** Deploy the `test` branch to `staging.devops.gulfheight.com` with its own Compose
-  project name, `.env.staging` and nginx server block.
-- **Zero-downtime deploys.** Run two backend replicas (blue/green) behind an nginx upstream and
-  switch between them. Note that the in-memory rate limiter then needs a shared store such as Redis.
-- **Edge rate limiting.** Add nginx `limit_req` for `/api/auth/` in the host config, and compare it
-  with the app-level limiter.
-- **Cloudflare orange cloud.** Switch to proxied mode with Full (strict), enable the `real_ip` block
-  in the nginx config, and check that the rate limiter still sees real client IPs.
+- **Backups.** `ansible/backup.yml` already copies the database and the certificate to your laptop.
+  Run it on a schedule, keep copies in a Cloud Storage bucket, and practise a **restore**.
+- **Security scanning.** Add Trivy or Docker Scout to `ci-test.yml` and fail on critical CVEs; enable
+  Dependabot for npm, GitHub Actions and Dockerfiles; pin actions by commit SHA.
+- **Monitoring.** Point an uptime checker (for example Uptime Kuma) at `/api/health`; add a
+  Prometheus `/metrics` endpoint and a Grafana dashboard.
+- **Staging.** Deploy the `test` branch to `staging.devops.gulfheight.com` on a second VM (with
+  Ansible that is one command).
+- **Zero-downtime deploys.** Run two backend replicas (blue/green) behind the proxy and switch between
+  them. The in-memory rate limiter then needs a shared store such as Redis.
+- **Edge rate limiting.** Add nginx `limit_req` for `/api/auth/` in
+  [`deploy/nginx/snippets/`](deploy/nginx/snippets/) and compare it with the app's own limiter.
+- **Cloudflare orange cloud.** Follow the *Going deeper* box in [Stage 3](deploy/stage-3-https.md) and
+  check that the rate limiter still sees real client IPs.
 
-**Use your own domain.** Replace `devops.gulfheight.com` in these places:
+**Use your own domain.** The name lives in settings, not in code:
 
-1. the `server_name`, redirect and certificate paths in both files under `deploy/nginx/` (and,
-   if you like, the file names);
-2. the `certbot -d` command;
-3. the `environment.url` and the "Verify the public site" step in `.github/workflows/ci-main.yml`;
-4. the final message of `deploy/deploy.sh`;
-5. your DNS record.
+1. your DNS A record ([Stage 2](deploy/stage-2-domain-http.md));
+2. `DOMAIN` in `.env.prod`, and the `-d` of the certbot command ([Stage 3](deploy/stage-3-https.md));
+3. the GitHub variable `SITE_URL` ([Stage 4](deploy/stage-4-automated-deploys.md));
+4. `domain` and `cloudflare_zone` in `ansible/group_vars/all.yml` (Stage 5).
 
-Then run `grep -rn "gulfheight" --exclude-dir=node_modules .` to catch the rest.
+Then `grep -rn "gulfheight" --exclude-dir=node_modules .` finds the remaining mentions, which are
+examples in comments and docs.

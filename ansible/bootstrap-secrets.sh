@@ -104,7 +104,7 @@ find_tool() {
   fi
 }
 ANSIBLE_VAULT="$(find_tool ansible-vault)" \
-  || die "ansible-vault not found. Install Ansible with: pipx install ansible-core (see ansible/README.md)"
+  || die "ansible-vault not found. Install Ansible with: pipx install ansible-core (see stages/stage-5-ansible.md)"
 command -v openssl >/dev/null 2>&1 || die "openssl not found."
 command -v ssh-keygen >/dev/null 2>&1 || die "ssh-keygen not found (OpenSSH client)."
 

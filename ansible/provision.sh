@@ -122,7 +122,7 @@ find_tool() {
   fi
 }
 ANSIBLE_PLAYBOOK="$(find_tool ansible-playbook)" \
-  || die "ansible-playbook not found. Install it with: pipx install ansible-core (see ansible/README.md)"
+  || die "ansible-playbook not found. Install it with: pipx install ansible-core (see stages/stage-5-ansible.md)"
 readonly ANSIBLE_PLAYBOOK
 # backup.yml runs `ansible-vault` on this laptop: make sure it is the one that
 # was installed next to ansible-playbook.

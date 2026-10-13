@@ -1,6 +1,6 @@
 # Stage 4: Automated deploys
 
-[README](../README.md) · [Stage 1](stage-1-ip-http.md) · [Stage 2](stage-2-domain-http.md) · [Stage 3](stage-3-https.md) · **Stage 4** · [Stage 5](../ansible/README.md)
+[README](../README.md) · [Stage 1](stage-1-ip-http.md) · [Stage 2](stage-2-domain-http.md) · [Stage 3](stage-3-https.md) · **Stage 4** · [Stage 5](stage-5-ansible.md)
 
 ![Stage 4: git push to main makes GitHub Actions build and push the images, then deploy them to the VM over SSH](../docs/images/stage-4.svg)
 
@@ -171,7 +171,7 @@ real fix is a `git revert` on `dev`, promoted like any change.
 - A no-sudo `deploy` account owns `/opt/devops-workshop`; CI logs in with its own revocable key.
 - A merge into `main` reaches production on its own, and the footer proves which commit is live.
 
-Next: the VM itself is still hand-made. [Stage 5 (optional)](../ansible/README.md) rebuilds a deleted
+Next: the VM itself is still hand-made. [Stage 5 (optional)](stage-5-ansible.md) rebuilds a deleted
 VM, data and certificate included, with one command.
 
 <details>
@@ -183,7 +183,7 @@ VM, data and certificate included, with one command.
   renewal never run at the same moment; the second one waits (up to 5 or 10 minutes).
 - Why `rsync --delete` only for `deploy/`: a file deleted in Git disappears from the VM too, while
   the bundle root, where `.env.prod` lives, is never mirrored.
-- Rehearse a deploy on your laptop without Docker Hub: see the header of [`deploy.sh`](deploy.sh)
+- Rehearse a deploy on your laptop without Docker Hub: see the header of [`deploy.sh`](../deploy/deploy.sh)
   (`SKIP_PULL=1`).
 
 </details>

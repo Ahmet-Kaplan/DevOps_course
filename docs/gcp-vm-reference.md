@@ -1,6 +1,6 @@
 # Google Cloud reference
 
-[README](../README.md) · [Stage 1](stage-1-ip-http.md) · [Stage 2](stage-2-domain-http.md) · [Stage 3](stage-3-https.md) · [Stage 4](stage-4-automated-deploys.md) · [Stage 5](../ansible/README.md) · **Google Cloud reference**
+[README](../README.md) · [Stage 1](../stages/stage-1-ip-http.md) · [Stage 2](../stages/stage-2-domain-http.md) · [Stage 3](../stages/stage-3-https.md) · [Stage 4](../stages/stage-4-automated-deploys.md) · [Stage 5](../stages/stage-5-ansible.md) · **Google Cloud reference**
 
 This page is a lookup, not a story. The stages tell you what to do; come here to understand the
 Google Cloud parts, compare options, or clean up. Commands run on your laptop (or in Cloud Shell)
@@ -8,9 +8,9 @@ with the [gcloud CLI](https://cloud.google.com/sdk/docs/install); `<VM-IP>` is y
 
 | The course VM | Value | Set in |
 |---------------|-------|--------|
-| Name, zone | `devops`, `europe-central2-a` (Warsaw) | [Stage 1, step 1](stage-1-ip-http.md#1-create-the-vm) |
+| Name, zone | `devops`, `europe-central2-a` (Warsaw) | [Stage 1, step 1](../stages/stage-1-ip-http.md#1-create-the-vm) |
 | Machine | `e2-medium` (2 shared vCPUs, 4 GB), Debian 13, balanced disk | Stage 1, step 1 |
-| External IP | static, named `devops-ip` | [Stage 1, step 2](stage-1-ip-http.md#2-make-the-ip-address-static) |
+| External IP | static, named `devops-ip` | [Stage 1, step 2](../stages/stage-1-ip-http.md#2-make-the-ip-address-static) |
 | Firewall | network tags `http-server`, `https-server` | Stage 1, step 1 (the two *Allow* boxes) |
 
 ```text

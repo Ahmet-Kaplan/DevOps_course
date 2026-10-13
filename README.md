@@ -77,9 +77,9 @@ one Compose file, so every moving part stays visible.
 | Orchestration | Docker Compose: dev project `bugsquash-dev`, production project `bugsquash` | [`docker-compose.yml`](docker-compose.yml), [`docker-compose.prod.yml`](docker-compose.prod.yml) |
 | Tests | `node:test` unit tests (fake DB), zero-dependency integration tests using `fetch` | [`app/backend/test/`](app/backend/test/), [`tests/integration/`](tests/integration/) |
 | CI/CD | GitHub Actions, Docker Buildx + QEMU, Docker Hub | [`.github/workflows/`](.github/workflows/) |
-| Server | Google Compute Engine VM `devops` (`e2-medium`, `europe-central2-a`), Debian 13 | [Google Cloud reference](deploy/gcp-vm-setup.md) |
-| DNS | Cloudflare, A record `devops.gulfheight.com` | [Stage 2](deploy/stage-2-domain-http.md) |
-| Provisioning (optional) | Ansible: one command sets up or rebuilds the VM | [`ansible/`](ansible/README.md) |
+| Server | Google Compute Engine VM `devops` (`e2-medium`, `europe-central2-a`), Debian 13 | [Google Cloud reference](docs/gcp-vm-reference.md) |
+| DNS | Cloudflare, A record `devops.gulfheight.com` | [Stage 2](stages/stage-2-domain-http.md) |
+| Provisioning (optional) | Ansible: one command sets up or rebuilds the VM | [Stage 5](stages/stage-5-ansible.md) |
 
 ## Repository structure
 
@@ -105,9 +105,14 @@ one Compose file, so every moving part stays visible.
 │       ├── *.html               index, login, signup, dashboard, 404
 │       └── src/js/, src/styles/ one module per page + api.js, game.js, ranks.js ...
 ├── tests/integration/api.test.mjs   black-box API tests: node:test + fetch, zero dependencies
-├── deploy/                      the "deploy bundle" that goes to the VM, plus the stage guides
-│   ├── stage-1-ip-http.md ... stage-4-automated-deploys.md    the deployment journey (Part 5)
-│   ├── gcp-vm-setup.md          Google Cloud reference: machine types, static IP, firewall, costs
+├── docs/                        read these first
+│   ├── containers-and-docker.md     the theory, slide by slide: containers, images, Docker, Compose
+│   ├── gcp-vm-reference.md          Google Cloud reference: machine types, static IP, firewall, costs
+│   └── images/                      the diagrams (src/ regenerates them)
+├── stages/                      THE DEPLOYMENT JOURNEY, one guide per stage (Part 5)
+│   ├── stage-1-ip-http.md ... stage-4-automated-deploys.md
+│   └── stage-5-ansible.md           optional: the VM as code
+├── deploy/                      the "deploy bundle" that goes to the VM
 │   ├── nginx/                   config of the proxy container
 │   │   ├── select-site-config.sh    picks the HTTP-only or the HTTPS config at every start
 │   │   ├── templates/           http-only/ and https/ site.conf.template
@@ -115,8 +120,7 @@ one Compose file, so every moving part stays visible.
 │   ├── tls.sh                   Stage 3 shortcut: issue / renew / status, via the certbot container
 │   ├── systemd/                 bugsquash-tls-renew.service + .timer: renewal twice a day
 │   └── deploy.sh                Stage 4: pull, up --wait, reload the proxy, smoke tests, prune
-├── ansible/                     Stage 5 (optional): provision.sh, site.yml, backup.yml, roles/
-└── docs/containers-deep-dive.md theory: namespaces, cgroups v2, overlayfs, VMs vs containers
+└── ansible/                     Stage 5 code: provision.sh, site.yml, backup.yml, roles/
 ```
 
 Every config file is heavily commented on purpose: the comments explain *why* each line is there.
@@ -128,20 +132,20 @@ Every config file is heavily commented on purpose: the comments explain *why* ea
 | Git | `git --version` | |
 | Docker Engine 24+ with the Compose v2 plugin, or Docker Desktop | `docker compose version` | Windows: use WSL 2 and keep the repository *inside* the WSL filesystem; bind mounts from `C:\` are slow |
 | Node.js 24 (optional) | `node --version` | only to run lint and tests *outside* containers |
-| Google Cloud CLI (optional) | `gcloud --version` | Stage 1 works in the web console; the CLI versions are in its *Going deeper* and the [Google Cloud reference](deploy/gcp-vm-setup.md) |
+| Google Cloud CLI (optional) | `gcloud --version` | Stage 1 works in the web console; the CLI versions are in its *Going deeper* and the [Google Cloud reference](docs/gcp-vm-reference.md) |
 
 | Account | Cost | Used for |
 |---------|------|----------|
 | GitHub | free | repository, pull requests, Actions |
 | Docker Hub | free | your own images, from [Part 4](#part-4-github-actions-and-secrets) on. Stages 1 to 3 run the course's public images (`alhuraibisaeed`) |
-| Google Cloud | pay-as-you-go; new accounts get free-trial credit that covers the course | the VM ([costs and cleanup](deploy/gcp-vm-setup.md#5-costs-and-cleanup)) |
+| Google Cloud | pay-as-you-go; new accounts get free-trial credit that covers the course | the VM ([costs and cleanup](docs/gcp-vm-reference.md#5-costs-and-cleanup)) |
 | Cloudflare + a domain | free plan | DNS. The course uses `gulfheight.com`; see [Make it your own](#make-it-your-own) for yours |
 
 You need basic terminal use (`cd`, `ls`, editing a file) and basic Git (`clone`, `commit`, `push`).
 
 ## Part 1: Theory first
 
-Read **[`docs/containers-deep-dive.md`](docs/containers-deep-dive.md)** before you type
+Read **[`docs/containers-and-docker.md`](docs/containers-and-docker.md)** before you type
 `docker compose up`. It explains what a container is from first principles, and every claim comes
 with a command you can run:
 
@@ -153,7 +157,7 @@ with a command you can run:
 | 4. Overlay filesystem and layers | why the Dockerfiles copy `package*.json` before the source code |
 | 5. VMs vs containers | why we run containers *inside* a Google Cloud VM |
 | 6. Proof: the shared kernel | captured on our VM: Debian and Alpine containers print the VM's kernel |
-| 7. [How this repo uses these concepts](docs/containers-deep-dive.md#7-how-this-repo-uses-these-concepts) | every production setting mapped to the kernel feature behind it |
+| 7. [How this repo uses these concepts](docs/containers-and-docker.md#7-how-this-repo-uses-these-concepts) | every production setting mapped to the kernel feature behind it |
 | 8. Review questions | 14 quiz questions with hidden answers |
 
 > [!TIP]
@@ -399,7 +403,7 @@ GitHub -> your repository -> **Settings -> Secrets and variables -> Actions**:
 |------|------|-------|------------|
 | Secret | `DOCKER_HUB_USERNAME` | your Docker Hub account name | CD (main): login and image names |
 | Secret | `DOCKER_HUB_ACCESS_TOKEN` | the token from 4.1 | CD (main): login |
-| Secrets | `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS` | the VM's address and a dedicated SSH key | the deploy job, set up in [Stage 4, step 6](deploy/stage-4-automated-deploys.md#6-add-the-github-secrets-and-the-switch) |
+| Secrets | `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS` | the VM's address and a dedicated SSH key | the deploy job, set up in [Stage 4, step 6](stages/stage-4-automated-deploys.md#6-add-the-github-secrets-and-the-switch) |
 | Variables | `ENABLE_AUTO_DEPLOY`, `DEPLOY_PATH`, `SITE_URL` | `true` switches the deploy job on | the deploy job (Stage 4) |
 
 `ci-dev.yml` and `ci-test.yml` need **no secrets**, so they work on a fresh fork.
@@ -429,14 +433,14 @@ it by hand again.
 
 | Stage | Goal | What you do | Result | Guide |
 |-------|------|-------------|--------|-------|
-| 1 | The app on a bare IP | create the VM, install Docker, `scp` three things, `docker compose up -d` | `http://<VM-IP>` | [Stage 1](deploy/stage-1-ip-http.md) |
-| 2 | A name for the site | add one Cloudflare A record, set `DOMAIN` | `http://devops.gulfheight.com` | [Stage 2](deploy/stage-2-domain-http.md) |
-| 3 | HTTPS | get a Let's Encrypt certificate with the certbot container, install the renewal timer | `https://devops.gulfheight.com` | [Stage 3](deploy/stage-3-https.md) |
-| 4 | Automated deploys | `deploy.sh`, a no-sudo `deploy` user, and GitHub Actions deploying every merge into `main` | the footer shows your merged commit | [Stage 4](deploy/stage-4-automated-deploys.md) |
-| 5 (optional) | The VM as code | one Ansible command provisions, or rebuilds, the VM with its data and certificate | the same site on a brand-new VM | [Stage 5](ansible/README.md) |
+| 1 | The app on a bare IP | create the VM, install Docker, `scp` three things, `docker compose up -d` | `http://<VM-IP>` | [Stage 1](stages/stage-1-ip-http.md) |
+| 2 | A name for the site | add one Cloudflare A record, set `DOMAIN` | `http://devops.gulfheight.com` | [Stage 2](stages/stage-2-domain-http.md) |
+| 3 | HTTPS | get a Let's Encrypt certificate with the certbot container, install the renewal timer | `https://devops.gulfheight.com` | [Stage 3](stages/stage-3-https.md) |
+| 4 | Automated deploys | `deploy.sh`, a no-sudo `deploy` user, and GitHub Actions deploying every merge into `main` | the footer shows your merged commit | [Stage 4](stages/stage-4-automated-deploys.md) |
+| 5 (optional) | The VM as code | one Ansible command provisions, or rebuilds, the VM with its data and certificate | the same site on a brand-new VM | [Stage 5](stages/stage-5-ansible.md) |
 
 Google Cloud details (machine types, static IP, firewall rules, IAP, costs and cleanup) are in the
-[Google Cloud reference](deploy/gcp-vm-setup.md).
+[Google Cloud reference](docs/gcp-vm-reference.md).
 
 ### 5.1 How code and settings reach the VM
 
@@ -597,17 +601,17 @@ docker stats --no-stream                  # memory against the cgroup limits
 | CI (dev): hadolint or shellcheck fails | a best-practice rule such as `DL3018` or `SC2086` | fix it, or add a justified `# hadolint ignore=DLxxxx` above the line |
 | CI (test): "runs as root" | a Dockerfile lost its non-root `USER` line | restore `USER 1000:1000` (backend) / `USER 101` (frontend) |
 | CI (test): a deploy step fails | a container crashed or a healthcheck failed | read the "Dump container state and logs" step |
-| Deploy job fails (SSH, host key, rsync) | Stage 4 setup | [Stage 4 troubleshooting](deploy/stage-4-automated-deploys.md#troubleshooting) |
+| Deploy job fails (SSH, host key, rsync) | Stage 4 setup | [Stage 4 troubleshooting](stages/stage-4-automated-deploys.md#troubleshooting) |
 
 **On the server**
 
 | You are stuck at... | Look here |
 |---------------------|-----------|
-| creating the VM, SSH, installing Docker, the first `up -d` | [Stage 1 troubleshooting](deploy/stage-1-ip-http.md#troubleshooting) |
-| the DNS record, `dig` | [Stage 2 troubleshooting](deploy/stage-2-domain-http.md#troubleshooting) |
-| certbot, the redirect, the padlock, renewals | [Stage 3 troubleshooting](deploy/stage-3-https.md#troubleshooting) |
-| `deploy.sh`, the CI deploy, rollbacks | [Stage 4 troubleshooting](deploy/stage-4-automated-deploys.md#troubleshooting) |
-| firewall rules, the static IP, quotas, costs | [Google Cloud reference](deploy/gcp-vm-setup.md#troubleshooting) |
+| creating the VM, SSH, installing Docker, the first `up -d` | [Stage 1 troubleshooting](stages/stage-1-ip-http.md#troubleshooting) |
+| the DNS record, `dig` | [Stage 2 troubleshooting](stages/stage-2-domain-http.md#troubleshooting) |
+| certbot, the redirect, the padlock, renewals | [Stage 3 troubleshooting](stages/stage-3-https.md#troubleshooting) |
+| `deploy.sh`, the CI deploy, rollbacks | [Stage 4 troubleshooting](stages/stage-4-automated-deploys.md#troubleshooting) |
+| firewall rules, the static IP, quotas, costs | [Google Cloud reference](docs/gcp-vm-reference.md#troubleshooting) |
 
 A few symptoms that can appear in any stage:
 
@@ -615,7 +619,7 @@ A few symptoms that can appear in any stage:
 |---------|--------------|-----|
 | **502 Bad Gateway** from nginx | backend or frontend down or still starting | `dc ps`, `dc logs --tail=100 backend proxy` (the `dc` alias from 5.5) |
 | `/api/health` returns **503** `{"status":"error"}` | the backend cannot reach Postgres: it is unhealthy, or `POSTGRES_PASSWORD` no longer matches the volume | `dc logs backend db` (the reason is logged there, never shown publicly); after changing the password, also run `ALTER USER` in psql |
-| Login does not stick (you bounce back to the login page) | `COOKIE_SECURE=true` while the site is still plain HTTP | `COOKIE_SECURE=false` until Stage 3 ([Stage 1, step 5](deploy/stage-1-ip-http.md#5-create-envprod-on-your-laptop)) |
+| Login does not stick (you bounce back to the login page) | `COOKIE_SECURE=true` while the site is still plain HTTP | `COOKIE_SECURE=false` until Stage 3 ([Stage 1, step 5](stages/stage-1-ip-http.md#5-create-envprod-on-your-laptop)) |
 | `pull access denied` or `manifest unknown` | wrong `DOCKER_HUB_USERNAME`, or that tag was never pushed | check the tags on Docker Hub |
 | `exec format error` | image built for another CPU (for example pushed by hand from a laptop) | let CD (main) build it: it builds amd64 and arm64 |
 
@@ -700,7 +704,7 @@ Tool-only variables:
 3. Find the new short SHA in the footer and in `/api/health`, then roll back with
    `./deploy/deploy.sh sha-<previous>` and watch the footer change back.
 
-**Containers and Linux** (pair these with [the theory chapter](docs/containers-deep-dive.md))
+**Containers and Linux** (pair these with [the theory chapter](docs/containers-and-docker.md))
 
 Use the local production rehearsal from [2.6](#26-rehearse-the-production-stack-locally-optional)
 with `alias dc='docker compose -f docker-compose.prod.yml --env-file .env.ci'`.
@@ -738,14 +742,14 @@ with `alias dc='docker compose -f docker-compose.prod.yml --env-file .env.ci'`.
   them. The in-memory rate limiter then needs a shared store such as Redis.
 - **Edge rate limiting.** Add nginx `limit_req` for `/api/auth/` in
   [`deploy/nginx/snippets/`](deploy/nginx/snippets/) and compare it with the app's own limiter.
-- **Cloudflare orange cloud.** Follow the *Going deeper* box in [Stage 3](deploy/stage-3-https.md) and
+- **Cloudflare orange cloud.** Follow the *Going deeper* box in [Stage 3](stages/stage-3-https.md) and
   check that the rate limiter still sees real client IPs.
 
 **Use your own domain.** The name lives in settings, not in code:
 
-1. your DNS A record ([Stage 2](deploy/stage-2-domain-http.md));
-2. `DOMAIN` in `.env.prod`, and the `-d` of the certbot command ([Stage 3](deploy/stage-3-https.md));
-3. the GitHub variable `SITE_URL` ([Stage 4](deploy/stage-4-automated-deploys.md));
+1. your DNS A record ([Stage 2](stages/stage-2-domain-http.md));
+2. `DOMAIN` in `.env.prod`, and the `-d` of the certbot command ([Stage 3](stages/stage-3-https.md));
+3. the GitHub variable `SITE_URL` ([Stage 4](stages/stage-4-automated-deploys.md));
 4. `domain` and `cloudflare_zone` in `ansible/group_vars/all.yml` (Stage 5).
 
 Then `grep -rn "gulfheight" --exclude-dir=node_modules .` finds the remaining mentions, which are

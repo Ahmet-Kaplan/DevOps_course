@@ -3,7 +3,7 @@
 # roles/docker/defaults/main.yml - knobs of the "docker" role
 # -----------------------------------------------------------------------------
 # Installs Docker Engine from Docker's OWN apt repository (download.docker.com),
-# exactly like the manual steps in deploy/stage-1-ip-http.md, step 4 (Install Docker).
+# exactly like the manual steps in stages/stage-1-ip-http.md, step 4 (Install Docker).
 # =============================================================================
 
 # Packages this role needs before it can add the repository

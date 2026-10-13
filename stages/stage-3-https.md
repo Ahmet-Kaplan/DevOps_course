@@ -1,6 +1,6 @@
 # Stage 3: HTTPS with Let's Encrypt
 
-[README](../README.md) · [Stage 1](stage-1-ip-http.md) · [Stage 2](stage-2-domain-http.md) · **Stage 3** · [Stage 4](stage-4-automated-deploys.md) · [Stage 5](../ansible/README.md)
+[README](../README.md) · [Stage 1](stage-1-ip-http.md) · [Stage 2](stage-2-domain-http.md) · **Stage 3** · [Stage 4](stage-4-automated-deploys.md) · [Stage 5](stage-5-ansible.md)
 
 ![Stage 3: certbot gets a free Let's Encrypt certificate, the proxy serves HTTPS on port 443 and renews it twice a day](../docs/images/stage-3.svg)
 
@@ -145,7 +145,7 @@ vm$ docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm cert
 
 You should see `Congratulations, all simulated renewals succeeded`. A real renewal is two commands:
 `... run --rm certbot renew` (renews only when due) and `... exec proxy nginx -s reload` (nginx
-loads the new files without dropping a single connection). [`deploy/tls.sh`](tls.sh) `renew` runs
+loads the new files without dropping a single connection). [`deploy/tls.sh`](../deploy/tls.sh) `renew` runs
 exactly these two, plus a lock and some checks, and a systemd timer runs that twice a day:
 
 ```console
@@ -212,7 +212,7 @@ attacks and caches files, then opens a **second** HTTPS connection to your proxy
 - **SSL/TLS -> Overview -> Full (strict)**: Cloudflare checks your Let's Encrypt certificate on that
   second connection. **Never "Flexible"**: Cloudflare would talk plain HTTP to port 80, the proxy
   answers "go to HTTPS", Cloudflare asks over HTTP again... `ERR_TOO_MANY_REDIRECTS`.
-- Uncomment [`deploy/nginx/snippets/cloudflare-real-ip.conf`](nginx/snippets/cloudflare-real-ip.conf),
+- Uncomment [`deploy/nginx/snippets/cloudflare-real-ip.conf`](../deploy/nginx/snippets/cloudflare-real-ip.conf),
   copy `deploy/nginx` again and run `vm$ docker compose -f docker-compose.prod.yml --env-file .env.prod
   exec proxy nginx -s reload`, so logs and the login rate limit see real visitor IPs instead of Cloudflare's.
 - Renewals keep working (the challenge folder is served on port 443 too). `tls.sh` needs `FORCE=1`

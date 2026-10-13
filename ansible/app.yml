@@ -45,7 +45,7 @@
         fail_msg: >-
           {{ secrets_file }} does not exist. Create it once with
           ./ansible/bootstrap-secrets.sh  (server already set up by hand? add
-          --from-env <path to its .env.prod>, see ansible/README.md).
+          --from-env <path to its .env.prod>, see stages/stage-5-ansible.md).
         quiet: true
       tags: [always]
 

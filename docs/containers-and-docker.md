@@ -13,7 +13,7 @@
   Engine VM `devops` (Debian 13 "trixie", Debian's cloud kernel 6.12). Blocks marked **Expected on the GCE
   VM** show what a command prints there; your version numbers, IDs and IP addresses will differ slightly.
 - `$` is the shell prompt. Commands that need root are written with `sudo`; keep it on the VM too, where
-  you log in as a normal user ([Stage 1](../deploy/stage-1-ip-http.md)). A full prompt such as
+  you log in as a normal user ([Stage 1](../stages/stage-1-ip-http.md)). A full prompt such as
   `you@devops:~$` marks a session on the server (Compute Engine sets the hostname to the instance name,
   `devops`). Inside code blocks, lines starting with `#` and the `<-` arrows are explanatory comments
   added for this chapter, not output.
@@ -214,7 +214,7 @@ There is no `runc` in the tree: it did its job and exited. From the host's point
 
 > **Security note.** `dockerd` runs as root and anyone who can write to `/var/run/docker.sock` can ask it
 > to start a privileged container that mounts `/`. **Membership in the `docker` group is equivalent to
-> root.** Only add trusted admins to it ([Stage 1, step 4](../deploy/stage-1-ip-http.md#4-install-docker)).
+> root.** Only add trusted admins to it ([Stage 1, step 4](../stages/stage-1-ip-http.md#4-install-docker)).
 
 ---
 

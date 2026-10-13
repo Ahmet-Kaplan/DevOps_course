@@ -2,7 +2,7 @@
 # =============================================================================
 # roles/docker/tasks/main.yml - Docker Engine from download.docker.com
 # -----------------------------------------------------------------------------
-# The Ansible version of deploy/stage-1-ip-http.md, step 4. Compare the two: the
+# The Ansible version of stages/stage-1-ip-http.md, step 4. Compare the two: the
 # shell commands say HOW, these tasks say WHAT the result must be - and can
 # therefore be re-run safely at any time.
 # =============================================================================

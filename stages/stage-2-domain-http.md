@@ -1,6 +1,6 @@
 # Stage 2: A name for the site (still HTTP)
 
-[README](../README.md) · [Stage 1](stage-1-ip-http.md) · **Stage 2** · [Stage 3](stage-3-https.md) · [Stage 4](stage-4-automated-deploys.md) · [Stage 5](../ansible/README.md)
+[README](../README.md) · [Stage 1](stage-1-ip-http.md) · **Stage 2** · [Stage 3](stage-3-https.md) · [Stage 4](stage-4-automated-deploys.md) · [Stage 5](stage-5-ansible.md)
 
 ![Stage 2: a Cloudflare DNS record points devops.gulfheight.com at the VM, still over HTTP](../docs/images/stage-2.svg)
 

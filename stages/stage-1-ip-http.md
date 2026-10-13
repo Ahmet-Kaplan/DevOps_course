@@ -1,6 +1,6 @@
 # Stage 1: The app on a bare IP address
 
-[README](../README.md) · **Stage 1** · [Stage 2](stage-2-domain-http.md) · [Stage 3](stage-3-https.md) · [Stage 4](stage-4-automated-deploys.md) · [Stage 5](../ansible/README.md)
+[README](../README.md) · **Stage 1** · [Stage 2](stage-2-domain-http.md) · [Stage 3](stage-3-https.md) · [Stage 4](stage-4-automated-deploys.md) · [Stage 5](stage-5-ansible.md)
 
 ![Stage 1: copy three files to a Google Cloud VM with scp, pull the images from Docker Hub, and open the game at the VM's IP address](../docs/images/stage-1.svg)
 
@@ -241,7 +241,7 @@ laptop$ gcloud compute ssh devops --zone=europe-central2-a
 The console's two checkboxes do the same as `--tags` plus the two firewall rules (if the rules
 already exist, "already exists" is fine). `gcloud compute ssh` creates its own key
 (`~/.ssh/google_compute_engine`), and `gcloud compute scp` copies files with it. Machine types,
-firewall details and costs: [Google Cloud reference](gcp-vm-setup.md).
+firewall details and costs: [Google Cloud reference](../docs/gcp-vm-reference.md).
 
 </details>
 
@@ -253,7 +253,7 @@ host firewall such as `ufw` ever sees them. A published `3000:3000` would theref
 whole internet whatever `ufw` says, with only Google's firewall in the way. That is why the backend,
 frontend and database publish nothing: they talk on private Docker networks, and the proxy is the
 single entrance. Check it: `laptop$ curl -m 5 http://<VM-IP>:3000/api/health` times out.
-[Chapter 7 of the theory notes](../docs/containers-deep-dive.md#72-networks--network-namespaces--bridges)
+[Chapter 7 of the theory notes](../docs/containers-and-docker.md#72-networks--network-namespaces--bridges)
 explains the kernel side.
 
 </details>

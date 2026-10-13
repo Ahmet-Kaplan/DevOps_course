@@ -51,24 +51,28 @@ function createApp({ db, config = loadConfig(), logger = console }) {
   const app = express();
 
   // REVERSE PROXIES: in production a request travels
-  //   browser -> host nginx (TLS) -> [frontend nginx container] -> this app.
+  //   browser -> edge proxy container (nginx, TLS) -> this app
+  // (or through the frontend container's own nginx /api/ proxy).
   // Each proxy opens its own TCP connection, so the socket's peer address is
   // the proxy, not the user. Proxies pass the real client IP in the
   // X-Forwarded-For header, but a client could forge that header too, so we
   // only trust it when it was added by a proxy on a private address:
-  //   loopback    127.0.0.0/8, ::1       (host nginx -> 127.0.0.1:3000)
-  //   uniquelocal 10/8, 172.16/12, 192.168/16, fc00::/7 (Docker bridge networks)
+  //   loopback    127.0.0.0/8, ::1       (requests from inside this container)
+  //   uniquelocal 10/8, 172.16/12, 192.168/16, fc00::/7 (Docker bridge networks:
+  //               the proxy and frontend containers on the "edge" network)
   //   linklocal   169.254/16, fe80::/10
   // With this, req.ip is the real user's IP (used by the rate limiter and logs)
   // and req.protocol reflects X-Forwarded-Proto.
-  // Surprise worth seeing in `docker compose logs`: even when host nginx
-  // connects to 127.0.0.1:3000, the container sees the Docker bridge gateway
-  // (e.g. 172.18.0.1) as the peer, because Docker's port publishing forwards
-  // the connection. That is why 'uniquelocal' must be trusted, not just loopback.
+  // Surprise worth seeing in `docker compose logs` (dev stack): a request your
+  // laptop sends to the published port 127.0.0.1:3000 arrives with the Docker
+  // bridge gateway (e.g. 172.18.0.1) as the peer, because Docker's port
+  // publishing forwards the connection. In production the proxy container
+  // connects from its own 172.x address. That is why 'uniquelocal' must be
+  // trusted, not just loopback.
   app.set('trust proxy', 'loopback, linklocal, uniquelocal');
 
   // Sensible security headers (nosniff, frame protection, CSP...). HSTS is
-  // left to the host nginx: whoever terminates TLS owns the HTTPS policy.
+  // left to the edge proxy: whoever terminates TLS owns the HTTPS policy.
   app.use(helmet({ strictTransportSecurity: false }));
 
   app.use(accessLog(logger));

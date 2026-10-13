@@ -84,7 +84,8 @@ function loadConfig(env = process.env) {
     jwtSecret,
     jwtExpiresIn: parseExpiresIn(env.JWT_EXPIRES_IN),
     // Secure cookies are only sent over HTTPS. Production sits behind TLS on
-    // the host nginx, so default to true there; plain-http dev defaults to false.
+    // the edge proxy, so default to true there (stages 1-2 of the workshop set
+    // COOKIE_SECURE=false while the site is still plain HTTP); dev defaults to false.
     cookieSecure: parseBoolean('COOKIE_SECURE', env.COOKIE_SECURE, isProduction),
     authRateLimitMax: parsePositiveInt('AUTH_RATE_LIMIT_MAX', env.AUTH_RATE_LIMIT_MAX, 30),
 

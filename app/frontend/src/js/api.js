@@ -5,7 +5,7 @@
  * it to whichever origin served the page:
  *   - local dev:  http://localhost:5173/api/...  -> Vite dev server proxy -> backend:3000
  *   - CI / Docker: http://localhost:8080/api/... -> frontend nginx proxy  -> backend:3000
- *   - production: https://devops.gulfheight.com/api/... -> host nginx     -> 127.0.0.1:3000
+ *   - production: https://devops.gulfheight.com/api/... -> edge proxy     -> backend:3000
  *
  * Because the page and the API share one origin, there is no CORS to configure,
  * and the httpOnly auth cookie (bugsquash_token) is sent automatically. The

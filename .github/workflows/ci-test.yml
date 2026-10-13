@@ -5,11 +5,16 @@
 #
 # The second quality gate answers "do the containers work TOGETHER?":
 #   1. build the "production" Dockerfile targets (the exact images we ship);
-#   2. start them with the REAL docker-compose.prod.yml (same networks, limits,
-#      read-only filesystems, healthchecks as on the server);
-#   3. run tests/integration/api.test.mjs against http://localhost:8080
-#      (frontend nginx -> backend -> Postgres, the full request path);
-#   4. always tear everything down.
+#   2. start them with the REAL docker-compose.prod.yml through the REAL
+#      deploy/deploy.sh (same networks, limits, read-only filesystems,
+#      healthchecks and nginx proxy container as on the server);
+#   3. HTTP mode (stages 1-2 on the server: no certificate yet): run
+#      tests/integration/api.test.mjs against http://localhost, i.e. through
+#      the proxy -> frontend/backend -> Postgres, the full request path;
+#   4. HTTPS mode (stage 3+): put a self-signed certificate where certbot would
+#      put the real one, restart the proxy, and run the same tests against
+#      https://localhost - redirect, TLS, HTTP/2 and HSTS included;
+#   5. always tear everything down.
 # Nothing is pushed to Docker Hub from here - that is ci-main's job.
 # =============================================================================
 name: CI (test)
@@ -27,6 +32,11 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+
+# Every compose call needs the file AND the variables to even parse it -
+# including `ps`, `logs` and `down`. One definition, used by every step.
+env:
+  COMPOSE: docker compose -f docker-compose.prod.yml --env-file .env.prod
 
 jobs:
   integration:
@@ -80,8 +90,12 @@ jobs:
 
       # Security sanity check: a container running as root turns any app RCE
       # into root inside the container (and one kernel bug away from the host).
-      # Both Dockerfiles promise a non-root USER; make the promise testable.
-      - name: Verify images do not run as root
+      # Both of OUR Dockerfiles promise a non-root USER; make the promise
+      # testable. The proxy (official nginx image) is deliberately NOT in this
+      # list: its MASTER process runs as root to read the root-only Let's
+      # Encrypt keys, while its workers - the processes that handle requests -
+      # run as "nginx". That is checked separately once the stack runs.
+      - name: Verify our images do not run as root
         run: |
           for image in local/bugsquash-backend:ci local/bugsquash-frontend:ci; do
             user="$(docker image inspect --format '{{.Config.User}}' "$image")"
@@ -94,61 +108,133 @@ jobs:
             esac
           done
 
+      # A throwaway .env.prod (git-ignored), shaped like the one on the server.
       # Fresh random secrets on every run: even throwaway credentials should
       # never be hard-coded in a public workflow file.
-      - name: Write throwaway .env.ci
+      #   DOMAIN=localhost      the proxy's server name; also used for the
+      #                         self-signed certificate in the HTTPS part
+      #   COOKIE_SECURE=false   HTTP first, like stages 1-2 on the server
+      - name: Write throwaway .env.prod
         run: |
           {
             echo "DOCKER_HUB_USERNAME=local"
             echo "IMAGE_TAG=ci"
+            echo "DOMAIN=localhost"
+            echo "COOKIE_SECURE=false"
             echo "POSTGRES_DB=bugsquash"
             echo "POSTGRES_USER=bugsquash"
             echo "POSTGRES_PASSWORD=$(openssl rand -hex 32)"
             echo "JWT_SECRET=$(openssl rand -hex 32)"
-          } > .env.ci
+          } > .env.prod
+          chmod 600 .env.prod
 
-      # Same command shape as deploy.sh on the server, only the env file differs
-      # (.env.ci here, .env.prod there). Every compose call below repeats
-      # `-f ... --env-file ...` because Compose needs the variables to even
-      # parse the file - including for `ps`, `logs` and `down`.
-      #
-      # --wait blocks until every service is "running" AND "healthy" (that is
-      # what the healthchecks in the compose file are for) and fails if one
-      # turns unhealthy or the timeout expires. No fragile `sleep 30`!
-      - name: Start the production stack
-        run: docker compose -f docker-compose.prod.yml --env-file .env.ci up -d --wait --wait-timeout 180
+      # The REAL deploy script, in rehearsal mode: SKIP_PULL=1 uses the images
+      # built above instead of pulling from Docker Hub. It runs `up -d --wait`
+      # (every healthcheck must pass), reloads the proxy config and smoke-tests
+      # each hop - exactly what happens on the server.
+      - name: Deploy with deploy/deploy.sh (HTTP-only mode)
+        run: SKIP_PULL=1 ./deploy/deploy.sh ci
 
-      - name: Show running containers
-        run: docker compose -f docker-compose.prod.yml --env-file .env.ci ps
+      # Only the proxy may publish ports; the app containers must stay private.
+      # In `ps`, a PUBLISHED port looks like "0.0.0.0:80->80/tcp"; a port that
+      # is only reachable inside Docker's networks shows as "3000/tcp".
+      - name: Check published ports and nginx worker user
+        run: |
+          $COMPOSE ps --format 'table {{.Service}}\t{{.Status}}\t{{.Ports}}'
+          published="$($COMPOSE ps --format '{{.Service}}: {{.Ports}}' | grep -v '^proxy:' | grep -e '->' || true)"
+          if [ -n "$published" ]; then
+            echo "::error::only the proxy may publish ports, found: $published"
+            exit 1
+          fi
+          # Every process except the master must run as the "nginx" user.
+          $COMPOSE exec -T proxy ps -o user,args
+          if $COMPOSE exec -T proxy ps -o user,args | grep 'nginx: worker' | grep -qv '^nginx '; then
+            echo "::error::an nginx worker process runs as root"
+            exit 1
+          fi
 
-      - name: Run integration tests
+      - name: Integration tests over HTTP (through the proxy)
         env:
-          BASE_URL: http://localhost:8080
+          BASE_URL: http://localhost
         run: node --test tests/integration/api.test.mjs
 
-      # Also exercise the backend's own published port (what the host nginx
-      # proxies /api/ to in production) and the frontend's health endpoint.
-      - name: Smoke-test published ports
+      # Stage 1 on the server: the browser sends the bare IP as Host header.
+      - name: Smoke-test HTTP-only edge (IP access, /healthz, ACME path)
         run: |
-          curl --fail --silent --show-error http://127.0.0.1:3000/api/health
-          echo
-          curl --fail --silent --show-error http://127.0.0.1:8080/healthz
-          echo
+          curl --fail --silent --show-error http://127.0.0.1/healthz; echo
+          curl --fail --silent --show-error http://127.0.0.1/api/health; echo
+          curl --fail --silent --show-error --output /dev/null --write-out 'GET http://127.0.0.1/ -> %{http_code}\n' http://127.0.0.1/
+          # An unknown challenge token is a 404 from the proxy, never the app.
+          code="$(curl --silent --output /dev/null --write-out '%{http_code}' http://localhost/.well-known/acme-challenge/missing)"
+          [ "$code" = "404" ] || { echo "::error::ACME path answered $code instead of 404"; exit 1; }
+
+      # ---- HTTPS mode ---------------------------------------------------------
+      # certbot would write live/<DOMAIN>/fullchain.pem + privkey.pem into the
+      # "letsencrypt" volume. We put a self-signed certificate at that exact
+      # path (through a throwaway container, because the volume belongs to
+      # Docker), then restart the proxy: at start it finds the certificate and
+      # renders the HTTPS config - the same switch as in stage 3.
+      - name: Switch the proxy to HTTPS with a self-signed certificate
+        run: |
+          cert_dir="$RUNNER_TEMP/cert"
+          mkdir -p "$cert_dir"
+          openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+            -days 2 -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost" \
+            -keyout "$cert_dir/privkey.pem" -out "$cert_dir/fullchain.pem"
+          # install -D = create the target directory; -m 600 = root-only, like
+          # certbot's own key files; -t = into this directory.
+          $COMPOSE run --rm --no-deps -T -v "$cert_dir:/src:ro" --entrypoint install certbot \
+            -D -m 600 -t /etc/letsencrypt/live/localhost /src/fullchain.pem /src/privkey.pem
+          # The certbot service itself works (pinned image, read-only rootfs + tmpfs):
+          $COMPOSE run --rm --no-deps -T certbot --version
+          $COMPOSE restart proxy
+          # `restart` returns as soon as the container is STARTED; wait for its
+          # healthcheck (nothing is recreated - the configuration did not change).
+          $COMPOSE up -d --no-deps --wait --wait-timeout 60 proxy
+          $COMPOSE logs --no-color proxy | grep 'certificate found'
+          # Stage 3: HTTPS works -> the login cookie gets the Secure flag again.
+          sed -i 's/^COOKIE_SECURE=.*/COOKIE_SECURE=true/' .env.prod
+
+      # Again the real script: it recreates the backend (COOKIE_SECURE changed),
+      # detects HTTPS mode and checks the redirect and the TLS path.
+      - name: Deploy with deploy/deploy.sh (HTTPS mode)
+        run: SKIP_PULL=1 ./deploy/deploy.sh ci
+
+      - name: Smoke-test HTTPS edge (redirect, HTTP/2, HSTS)
+        run: |
+          # Port 80: everything but ACME and /healthz is a 301 to https://DOMAIN.
+          curl --silent --output /dev/null --write-out 'http://localhost/login.html -> %{http_code} %{redirect_url}\n' http://localhost/login.html
+          [ "$(curl --silent --output /dev/null --write-out '%{http_code} %{redirect_url}' http://localhost/login.html)" = "301 https://localhost/login.html" ]
+          curl --fail --silent --show-error http://127.0.0.1/healthz; echo
+          # Port 443: HTTP/2 + HSTS (--insecure: the certificate is self-signed).
+          headers="$(curl --fail --silent --show-error --insecure --http2 --head https://localhost/)"
+          echo "$headers"
+          echo "$headers" | grep -q '^HTTP/2 200'
+          echo "$headers" | grep -qi '^strict-transport-security: max-age='
+
+      - name: Integration tests over HTTPS (through the proxy)
+        env:
+          BASE_URL: https://localhost
+          # Node's fetch() must accept the self-signed certificate. ONLY ever
+          # do this against a throwaway test stack.
+          NODE_TLS_REJECT_UNAUTHORIZED: "0"
+        run: node --test tests/integration/api.test.mjs
 
       # Only runs when an earlier step failed: the logs are what you need to
       # debug a red build (crash on startup, failed healthcheck, nginx error).
       - name: Dump container state and logs
         if: failure()
         run: |
-          docker compose -f docker-compose.prod.yml --env-file .env.ci ps -a || true
-          docker compose -f docker-compose.prod.yml --env-file .env.ci logs --no-color --timestamps || true
+          $COMPOSE ps -a || true
+          $COMPOSE logs --no-color --timestamps || true
 
       # `always()` = run even if the tests failed or the job was cancelled.
-      # -v also removes the database volume: every run starts from scratch.
+      # -v also removes the volumes (database, certificate): every run starts
+      # from scratch. NEVER run `down -v` on the server.
       - name: Tear down
         if: always()
         run: |
-          if [ -f .env.ci ]; then
-            docker compose -f docker-compose.prod.yml --env-file .env.ci down -v --remove-orphans
-            rm -f .env.ci
+          if [ -f .env.prod ]; then
+            $COMPOSE down -v --remove-orphans
+            rm -f .env.prod
           fi

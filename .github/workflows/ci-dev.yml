@@ -8,8 +8,12 @@
 #   * backend:     ESLint + unit tests
 #   * frontend:    ESLint + production build (vite build)
 #   * dockerfiles: hadolint (Dockerfile best-practice linter)
-#   * static:      shellcheck on the deploy script, `docker compose config`
-#                  on both compose files, syntax check of the integration tests
+#   * static:      shellcheck on every shell script, `docker compose config`
+#                  on both compose files (prod with .env.prod.example),
+#                  systemd unit check, syntax check of the integration tests
+#   * proxy:       render the nginx proxy config in BOTH modes (HTTP-only and
+#                  HTTPS) exactly as the proxy container does, then `nginx -t`
+#   * ansible:     ansible-lint + syntax check of every playbook (stage 5)
 # The jobs are independent, so GitHub runs them IN PARALLEL on separate VMs.
 # =============================================================================
 name: CI (dev)
@@ -128,7 +132,7 @@ jobs:
 
   # ---------------------------------------------------------------------------
   static-checks:
-    name: Shellcheck & compose validation
+    name: Shellcheck, compose & systemd validation
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -138,38 +142,208 @@ jobs:
       # shellcheck is preinstalled on GitHub's ubuntu runners. It catches the
       # classic bash bugs: unquoted variables, word splitting, `cd` without
       # error handling, useless use of cat...
-      - name: Shellcheck deploy script
+      # deploy/nginx/select-site-config.sh is POSIX sh (the nginx image has no
+      # bash), sourced at proxy start; its "# shellcheck shell=sh" line tells
+      # shellcheck which dialect to check.
+      - name: Shellcheck all shell scripts
         run: |
           shellcheck --version
-          shellcheck deploy/deploy.sh
+          shellcheck deploy/*.sh deploy/nginx/*.sh ansible/*.sh
 
       # `config` parses the file, validates it against the Compose spec and
       # resolves every ${VARIABLE}. -q = print nothing, just set the exit code.
       - name: Validate docker-compose.yml (dev)
         run: docker compose -f docker-compose.yml config -q
 
-      # The prod file uses ${VAR:?error} for secrets, so it needs values.
-      # Dummy ones are fine: we validate structure, we never start anything.
-      # RUNNER_TEMP is a per-job temp dir outside the repo checkout.
-      - name: Validate docker-compose.prod.yml (with dummy secrets)
+      # The prod file uses ${VAR:?error} for secrets, so it needs values. We
+      # take the TEMPLATE students copy in stage 1 (.env.prod.example, DOMAIN
+      # still empty) and fill in only the two secrets: this proves that
+      # "cp .env.prod.example .env.prod + two openssl secrets" is a valid
+      # configuration. RUNNER_TEMP is a per-job temp dir outside the checkout.
+      - name: Validate docker-compose.prod.yml with .env.prod.example
         run: |
-          dummy_env="$RUNNER_TEMP/prod.env"
-          {
-            echo "DOCKER_HUB_USERNAME=ci-dummy"
-            echo "POSTGRES_PASSWORD=dummy-password"
-            echo "JWT_SECRET=dummy-secret"
-          } > "$dummy_env"
-          docker compose -f docker-compose.prod.yml --env-file "$dummy_env" config -q
+          prod_env="$RUNNER_TEMP/prod.env"
+          sed -e "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 32)/" \
+              -e "s/^JWT_SECRET=.*/JWT_SECRET=$(openssl rand -hex 32)/" \
+              .env.prod.example > "$prod_env"
+          docker compose -f docker-compose.prod.yml --env-file "$prod_env" config -q
+          echo "Services:"; docker compose -f docker-compose.prod.yml --env-file "$prod_env" config --services
+          echo "Images:";   docker compose -f docker-compose.prod.yml --env-file "$prod_env" config --images
 
       # A negative test: the ${VAR:?} guards must actually stop a deploy that
       # forgot its secrets. If `config` SUCCEEDS without them, that is a bug.
       - name: Ensure prod compose refuses to run without secrets
         run: |
-          if docker compose -f docker-compose.prod.yml --env-file /dev/null config -q 2>/dev/null; then
+          if docker compose -f docker-compose.prod.yml --env-file .env.prod.example config -q 2>/dev/null; then
             echo "::error file=docker-compose.prod.yml::config succeeded without POSTGRES_PASSWORD/JWT_SECRET - the :? guards are missing"
             exit 1
           fi
           echo "OK - compose refuses to start without the required secrets"
 
+      # systemd-analyze verify = the linter for unit files: unknown keys,
+      # typos in section names, a calendar spec that never fires, a missing
+      # ExecStart binary... The service hard-codes the server path
+      # /opt/devops-workshop, so we check a copy pointing at this checkout.
+      - name: Verify the systemd units (certificate renewal timer)
+        run: |
+          units="$RUNNER_TEMP/units"
+          mkdir -p "$units"
+          sed -e "s#/opt/devops-workshop#$GITHUB_WORKSPACE#g" \
+            deploy/systemd/bugsquash-tls-renew.service > "$units/bugsquash-tls-renew.service"
+          cp deploy/systemd/bugsquash-tls-renew.timer "$units/"
+          systemd-analyze verify "$units/bugsquash-tls-renew.service" "$units/bugsquash-tls-renew.timer"
+          systemd-analyze calendar "$(sed -n 's/^OnCalendar=//p' deploy/systemd/bugsquash-tls-renew.timer)"
+
       - name: Syntax-check integration tests
         run: node --check tests/integration/api.test.mjs
+
+  # ---------------------------------------------------------------------------
+  # The proxy's config is rendered from templates at container start, so a
+  # typo in deploy/nginx/ would only show up on the server - when nginx
+  # refuses to start and the site is DOWN. Here we start the real proxy
+  # service from docker-compose.prod.yml (same mounts, same read-only
+  # filesystem, same entrypoint) with `nginx -T`: render + test + print the
+  # final config, then exit. Both modes, plus stage 1's empty DOMAIN.
+  proxy-config:
+    name: Proxy config - render both modes & nginx -t
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      COMPOSE: docker compose -f docker-compose.prod.yml --env-file .env.prod
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v7
+
+      # Dummy values: nothing but the proxy is started (`run --no-deps`).
+      - name: Write a dummy .env.prod
+        run: |
+          {
+            echo "DOCKER_HUB_USERNAME=ci-dummy"
+            echo "DOMAIN=example.test"
+            echo "POSTGRES_PASSWORD=dummy"
+            echo "JWT_SECRET=dummy"
+          } > .env.prod
+
+      # `run --rm --no-deps proxy nginx -T`: a one-off proxy container without
+      # backend/frontend. The upstreams use `resolve`, so nginx accepts names
+      # that do not exist (yet) - exactly what lets the real proxy start
+      # before the app containers.
+      - name: Stage 1 - empty DOMAIN renders the HTTP-only site
+        run: |
+          DOMAIN="" $COMPOSE run --rm --no-deps -T proxy nginx -T > "$RUNNER_TEMP/stage1.txt" 2>&1 \
+            || { cat "$RUNNER_TEMP/stage1.txt"; exit 1; }
+          grep 'DOMAIN is empty' "$RUNNER_TEMP/stage1.txt"
+          grep -Eq 'server_name +_;' "$RUNNER_TEMP/stage1.txt"
+          if grep -Eq '^[[:space:]]*listen[[:space:]]+443' "$RUNNER_TEMP/stage1.txt"; then
+            echo "::error::stage 1 must not render the HTTPS config"
+            exit 1
+          fi
+
+      - name: Stage 2 - DOMAIN set, no certificate -> HTTP-only site
+        run: |
+          $COMPOSE run --rm --no-deps -T proxy nginx -T > "$RUNNER_TEMP/stage2.txt" 2>&1 \
+            || { cat "$RUNNER_TEMP/stage2.txt"; exit 1; }
+          grep 'no certificate for example.test' "$RUNNER_TEMP/stage2.txt"
+          sed -n '/# configuration file \/etc\/nginx\/conf.d\/site.conf:/,$p' "$RUNNER_TEMP/stage2.txt"
+
+      # certbot would store the certificate in the "letsencrypt" volume under
+      # live/<DOMAIN>/. A self-signed one at the same path is enough for nginx.
+      - name: Stage 3 - certificate present -> HTTPS site
+        run: |
+          cert_dir="$RUNNER_TEMP/cert"
+          mkdir -p "$cert_dir"
+          openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+            -days 2 -subj "/CN=example.test" -addext "subjectAltName=DNS:example.test" \
+            -keyout "$cert_dir/privkey.pem" -out "$cert_dir/fullchain.pem"
+          # install -D = create the target directory; -m 600 = root-only, like
+          # certbot's own key files; -t = into this directory.
+          $COMPOSE run --rm --no-deps -T -v "$cert_dir:/src:ro" --entrypoint install certbot \
+            -D -m 600 -t /etc/letsencrypt/live/example.test /src/fullchain.pem /src/privkey.pem
+          $COMPOSE run --rm --no-deps -T proxy nginx -T > "$RUNNER_TEMP/stage3.txt" 2>&1 \
+            || { cat "$RUNNER_TEMP/stage3.txt"; exit 1; }
+          grep 'certificate found for example.test' "$RUNNER_TEMP/stage3.txt"
+          grep -Eq '^[[:space:]]*listen[[:space:]]+443 ssl' "$RUNNER_TEMP/stage3.txt"
+          # -F = fixed string; \$ = a literal "$" (nginx's variable, not the shell's)
+          grep -qF "return 301 https://example.test\$request_uri" "$RUNNER_TEMP/stage3.txt"
+          sed -n '/# configuration file \/etc\/nginx\/conf.d\/site.conf:/,$p' "$RUNNER_TEMP/stage3.txt"
+
+      - name: Clean up
+        if: always()
+        run: |
+          $COMPOSE --profile tools down -v --remove-orphans || true
+          rm -f .env.prod
+
+  # ---------------------------------------------------------------------------
+  # Stage 5 (optional): the Ansible code that rebuilds the server. Linting it
+  # on every push keeps the "delete the VM, rebuild with one command" path
+  # working even in weeks nobody runs it.
+  ansible:
+    name: Ansible - lint & syntax check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v7
+
+      # pipx installs each Python CLI tool into its own virtualenv (no clash
+      # with system packages). Exact versions: a new linter release with new
+      # rules should arrive through a reviewed commit, not break CI overnight.
+      - name: Install ansible-core and ansible-lint
+        run: |
+          pipx install ansible-core==2.21.5
+          pipx install ansible-lint==26.10.0
+          ansible --version
+          ansible-lint --version
+
+      # Only if the playbooks use modules from collections outside
+      # ansible.builtin (listed in requirements.yml).
+      - name: Install required collections
+        run: |
+          if [ -f requirements.yml ]; then
+            ansible-galaxy collection install -r requirements.yml
+          else
+            echo "no ansible/requirements.yml - only ansible.builtin modules are used"
+          fi
+
+      # CI does not have the vault password - and must never get it: a
+      # workflow log is far too easy to leak. But a play with
+      #     vars_files: [secrets/vault.yml]
+      # is DECRYPTED even by --syntax-check and ansible-lint, which then fail
+      # with "Attempting to decrypt but no vault secrets found". So, on this
+      # throwaway checkout only, the encrypted file is replaced by its
+      # plaintext template (same variable names, fake values) - or removed
+      # if there is none (a missing vars file is fine for a syntax check).
+      - name: Replace the encrypted vault with its plaintext template
+        run: |
+          vault=secrets/vault.yml
+          # An encrypted file starts with the line "$ANSIBLE_VAULT;1.1;AES256".
+          if [ -f "$vault" ] && head -n 1 "$vault" | grep -qF "\$ANSIBLE_VAULT;"; then
+            if [ -f secrets/vault.example.yml ]; then
+              cp secrets/vault.example.yml "$vault"
+              echo "using secrets/vault.example.yml in place of the encrypted $vault"
+            else
+              rm "$vault"
+              echo "no secrets/vault.example.yml - removed the encrypted $vault for the checks"
+            fi
+          else
+            echo "no encrypted $vault in the repository - nothing to replace"
+          fi
+
+      # Uses ansible/.ansible-lint (profile "production", the strictest).
+      - name: ansible-lint
+        run: ansible-lint
+
+      # --syntax-check parses a playbook (YAML, task keywords, roles, imports)
+      # without connecting anywhere. "-i localhost," = a one-host inline
+      # inventory; the real one (inventory.ini) is git-ignored.
+      - name: Syntax-check every playbook
+        run: |
+          for playbook in *.yml; do
+            [ "$playbook" = requirements.yml ] && continue
+            echo "::group::$playbook"
+            ansible-playbook --syntax-check -i localhost, "$playbook"
+            echo "::endgroup::"
+          done

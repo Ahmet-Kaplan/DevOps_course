@@ -12,9 +12,12 @@
 #            both x86 VMs (E2, N2, ...) and Arm VMs (Tau T2A, Axion C4A), and
 #            one multi-arch tag serves both: Docker pulls the matching
 #            variant automatically.
-#   deploy : OPTIONAL. Runs only if the repository variable
-#            ENABLE_AUTO_DEPLOY is "true". SSHes into the server and runs
-#            deploy/deploy.sh with the exact sha-<short> tag just built.
+#   deploy : OPTIONAL (workshop stage 4). Runs only if the repository
+#            variable ENABLE_AUTO_DEPLOY is "true". Copies the deploy bundle
+#            (docker-compose.prod.yml + deploy/) of THIS commit to the server
+#            with rsync over SSH, then runs deploy/deploy.sh there with the
+#            exact sha-<short> tag just built. The server has no Git checkout,
+#            and .env.prod (the secrets) never leaves the server.
 #
 # Required repository SECRETS (Settings -> Secrets and variables -> Actions):
 #   DOCKER_HUB_USERNAME       Docker Hub account name
@@ -25,14 +28,19 @@
 #   DEPLOY_HOST               the VM's static external IP (not the
 #                             Cloudflare-proxied domain: SSH does not pass
 #                             through Cloudflare's proxy)
-#   DEPLOY_USER               SSH user on the VM (member of the docker group)
+#   DEPLOY_USER               SSH user on the VM: the dedicated "deploy" user
+#                             (docker group, NO sudo) that owns DEPLOY_PATH
 #   DEPLOY_SSH_KEY            PRIVATE key of a dedicated deploy key pair
 #   DEPLOY_KNOWN_HOSTS        (optional, recommended) output of
 #                             `ssh-keyscan <server>` checked by hand once
 # Repository VARIABLES (not secret):
 #   ENABLE_AUTO_DEPLOY        "true" to enable the deploy job
-#   DEPLOY_PATH               (optional) repo path on the server,
+#   DEPLOY_PATH               (optional) bundle directory on the server,
 #                             default /opt/devops-workshop
+#   SITE_URL                  (optional) public URL checked after the deploy,
+#                             default https://devops.gulfheight.com
+# The server needs rsync installed (sudo apt-get install -y rsync; Ansible's
+# "common" role installs it).
 # =============================================================================
 name: CD (main)
 
@@ -149,8 +157,13 @@ jobs:
     # manual approval (Settings -> Environments -> production -> reviewers).
     environment:
       name: production
-      url: https://devops.gulfheight.com
+      url: ${{ vars.SITE_URL || 'https://devops.gulfheight.com' }}
     steps:
+      # The deploy bundle (compose file, scripts, proxy config) comes from
+      # THIS commit - the same one whose images were just built and pushed.
+      - name: Check out the code
+        uses: actions/checkout@v7
+
       # Plain OpenSSH, no third-party action: fewer supply-chain risks and
       # nothing magic - it is exactly what you would type in a terminal.
       - name: Configure SSH
@@ -175,10 +188,31 @@ jobs:
             ssh-keyscan -T 15 -H "$SSH_HOST" > ~/.ssh/known_hosts
           fi
           chmod 600 ~/.ssh/known_hosts
+          # One ssh command line for rsync and for the deploy step below.
+          echo "SSH_CMD=ssh -i $HOME/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15" >> "$GITHUB_ENV"
 
-      # On the server: fast-forward the checkout (deploy.sh and the compose
-      # file live in the repo) and deploy the IMMUTABLE tag of this commit,
-      # not "latest" - so a rollback is just `./deploy/deploy.sh sha-<older>`.
+      # rsync sends only what changed (checksums per file block), over SSH.
+      #   -a        "archive": recursive, keeps the executable bit of
+      #             deploy.sh and tls.sh (so `./deploy/deploy.sh` runs) and
+      #             the timestamps (unchanged files are skipped next time)
+      #   -z        compress on the wire
+      #   --delete  ONLY for deploy/: a file deleted in Git disappears on the
+      #             server too, so deploy/ is an exact mirror of this commit.
+      #             The bundle ROOT is synced file by file, without --delete:
+      #             .env.prod lives there and must never be touched.
+      - name: Copy the deploy bundle to the server (rsync over SSH)
+        env:
+          SSH_HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+        run: |
+          deploy_path="${DEPLOY_PATH:-/opt/devops-workshop}"
+          rsync -az --delete -e "$SSH_CMD" deploy/ "${SSH_USER}@${SSH_HOST}:${deploy_path}/deploy/"
+          rsync -az -e "$SSH_CMD" docker-compose.prod.yml "${SSH_USER}@${SSH_HOST}:${deploy_path}/"
+          echo "Bundle copied to ${SSH_USER}@server:${deploy_path}"
+
+      # Deploy the IMMUTABLE tag of this commit, not "latest" - so a rollback
+      # is just `./deploy/deploy.sh sha-<older>` on the server.
       - name: Run deploy script on the server
         env:
           SSH_HOST: ${{ secrets.DEPLOY_HOST }}
@@ -186,16 +220,16 @@ jobs:
           DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
         run: |
           image_tag="sha-${GITHUB_SHA::7}"
-          remote_cmd="cd ${DEPLOY_PATH:-/opt/devops-workshop} && git pull --ff-only && ./deploy/deploy.sh ${image_tag}"
+          remote_cmd="cd ${DEPLOY_PATH:-/opt/devops-workshop} && ./deploy/deploy.sh ${image_tag}"
           echo "Running on ${SSH_USER}@server: ${remote_cmd}"
-          ssh -i ~/.ssh/deploy_key \
-              -o BatchMode=yes \
-              -o StrictHostKeyChecking=yes \
-              -o ConnectTimeout=15 \
-              "${SSH_USER}@${SSH_HOST}" "${remote_cmd}"
+          # $SSH_CMD is unquoted on purpose: it must split into ssh + options.
+          # shellcheck disable=SC2086
+          $SSH_CMD "${SSH_USER}@${SSH_HOST}" "${remote_cmd}"
 
       - name: Verify the public site
+        env:
+          SITE_URL: ${{ vars.SITE_URL || 'https://devops.gulfheight.com' }}
         run: |
           curl --fail --silent --show-error --retry 5 --retry-delay 5 --retry-all-errors \
-            https://devops.gulfheight.com/api/health
+            "${SITE_URL%/}/api/health"
           echo

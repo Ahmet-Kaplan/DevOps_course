@@ -12,7 +12,7 @@
 ![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
 ![nginx](https://img.shields.io/badge/nginx-reverse%20proxy-009639?logo=nginx&logoColor=white)
 ![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI%2FCD-2088FF?logo=githubactions&logoColor=white)
-![Hetzner Cloud](https://img.shields.io/badge/Hetzner-Debian%2013-D50C2D?logo=hetzner&logoColor=white)
+![Google Cloud](https://img.shields.io/badge/Google%20Cloud-Debian%2013-4285F4?logo=googlecloud&logoColor=white)
 ![Cloudflare DNS](https://img.shields.io/badge/Cloudflare-DNS-F38020?logo=cloudflare&logoColor=white)
 ![Let's Encrypt](https://img.shields.io/badge/Let%27s%20Encrypt-TLS-003A70?logo=letsencrypt&logoColor=white)
 
@@ -23,9 +23,9 @@ Your scores are saved, the dashboard gives you a rank title ("Intern", "Works on
 just the excuse. The real subject of this workshop is the **path that code travels** from your
 laptop to a real HTTPS website. You run the stack locally with Docker Compose and promote changes
 through `dev -> test -> main` branches. GitHub Actions lints, tests, builds and pushes multi-arch
-images to Docker Hub, and you deploy them to a hardened Debian server on Hetzner Cloud behind
-nginx, Let's Encrypt and Cloudflare DNS at **https://devops.gulfheight.com**. There is
-deliberately **no Kubernetes**: one server and one Compose file, so every moving part stays visible.
+images to Docker Hub, and you deploy them to a hardened Debian VM on Google Cloud (Compute Engine)
+behind nginx, Let's Encrypt and Cloudflare DNS at **https://devops.gulfheight.com**. There is
+deliberately **no Kubernetes**: one VM and one Compose file, so every moving part stays visible.
 
 ---
 
@@ -41,7 +41,7 @@ deliberately **no Kubernetes**: one server and one Compose file, so every moving
   - [Part 2: Run it locally](#part-2-run-it-locally)
   - [Part 3: Git branching strategy](#part-3-git-branching-strategy)
   - [Part 4: GitHub Actions and secrets](#part-4-github-actions-and-secrets)
-  - [Part 5: Provision the Hetzner server](#part-5-provision-the-hetzner-server)
+  - [Part 5: Provision the Google Cloud VM](#part-5-provision-the-google-cloud-vm)
   - [Part 6: Cloudflare DNS](#part-6-cloudflare-dns)
   - [Part 7: HTTPS with Let's Encrypt](#part-7-https-with-lets-encrypt)
   - [Part 8: Deploy, pin and roll back](#part-8-deploy-pin-and-roll-back)
@@ -76,9 +76,10 @@ deliberately **no Kubernetes**: one server and one Compose file, so every moving
   - an optional SSH deploy job.
 - **Release engineering**: immutable `sha-<commit>` image tags, one-command rollbacks, smoke
   tests, and a footer that shows *which commit is live*.
-- **Linux server administration** on Hetzner Cloud:
+- **Cloud and Linux server administration** on a Google Compute Engine VM:
+  - the `gcloud` CLI, a reserved static external IP, network tags and VPC firewall rules;
   - SSH keys and a non-root deploy user;
-  - `ufw`, and why Docker-published ports bypass it;
+  - why Docker-published ports bypass host firewalls, and why our ports bind to `127.0.0.1`;
   - unattended upgrades;
   - the differences between Debian 13 and Debian 12.
 - **Reverse proxies**: TLS termination on the host nginx, `X-Forwarded-*` headers, Express
@@ -98,7 +99,8 @@ deliberately **no Kubernetes**: one server and one Compose file, so every moving
 | Production orchestration | Docker Compose (project `bugsquash`) | [`docker-compose.prod.yml`](docker-compose.prod.yml) |
 | Tests | `node:test` unit tests (fake DB) and zero-dependency integration tests using `fetch` | [`app/backend/test/`](app/backend/test/), [`tests/integration/`](tests/integration/) |
 | CI/CD | GitHub Actions, Docker Buildx + QEMU, Docker Hub | [`.github/workflows/`](.github/workflows/) |
-| Server | Hetzner Cloud, Debian 13 "trixie" (Debian 12 also works), x86 or Ampere Arm | [`deploy/hetzner-server-setup.md`](deploy/hetzner-server-setup.md) |
+| Server | Google Cloud Compute Engine VM `devops-workshop` (e2-small, `europe-west3-a`), Debian 13 "trixie" (Debian 12 also works), x86 or Arm (Tau T2A, Axion C4A) | [`deploy/gcp-vm-setup.md`](deploy/gcp-vm-setup.md) |
+| Network edge | Reserved static external IP `devops-workshop-ip`; VPC firewall rule `allow-http-https` (tcp:80,443) plus the default network's `default-allow-ssh` (tcp:22) | [`deploy/gcp-vm-setup.md`](deploy/gcp-vm-setup.md#3-open-ports-80-and-443-vpc-firewall-rules) |
 | Edge | Host nginx (apt package) + Let's Encrypt (certbot) | [`deploy/nginx/`](deploy/nginx/), [`deploy/letsencrypt-setup.md`](deploy/letsencrypt-setup.md) |
 | DNS | Cloudflare, `devops.gulfheight.com` A record | [`deploy/cloudflare-dns-guide.md`](deploy/cloudflare-dns-guide.md) |
 
@@ -129,7 +131,7 @@ flowchart TB
 
     HUB[("(4) Docker Hub<br/>user/bugsquash-backend<br/>user/bugsquash-frontend")]
 
-    subgraph HETZNER["(5) Hetzner server: Debian 13"]
+    subgraph GCE["(5) Google Cloud VM devops-workshop: Debian 13"]
         DEPLOY["deploy/deploy.sh<br/>compose pull, up --wait, smoke tests"]
         NGINX["host nginx :80 and :443<br/>Let's Encrypt TLS"]
         FE["frontend container<br/>nginx-unprivileged<br/>127.0.0.1:8080"]
@@ -137,8 +139,9 @@ flowchart TB
         DB[("postgres 17<br/>internal network: data")]
     end
 
-    CF["(6) Cloudflare DNS<br/>devops.gulfheight.com A record"]
+    CF["(6) Cloudflare DNS<br/>devops.gulfheight.com A record<br/>to the static external IP"]
     USER(["(7) User's browser"])
+    VPCFW{{"GCP VPC firewall<br/>allow tcp:22, 80, 443 only"}}
 
     LAPTOP -->|"git push"| DEV_BR
     DEV_BR -.->|"push / PR"| CI_DEV
@@ -149,7 +152,8 @@ flowchart TB
     HUB -->|"docker compose pull"| DEPLOY
     DEPLOY --> FE & BE & DB
     USER -->|"a. DNS lookup"| CF
-    USER -->|"b. HTTPS :443"| NGINX
+    USER -->|"b. HTTPS :443"| VPCFW
+    VPCFW --> NGINX
     NGINX -->|"/"| FE
     NGINX -->|"/api/"| BE
     BE --> DB
@@ -179,23 +183,23 @@ The same diagram in plain ASCII, for terminals and `less README.md`:
                                                              |
                                                              | docker compose pull + up --wait
                                                              v (deploy/deploy.sh)
- (5) HETZNER SERVER   +------------------------------------------------------------------+
-     Debian 13        | ufw: 22, 80, 443 only                                            |
-     /opt/devops-     | host nginx  :80  --> 301 to https (except /.well-known/acme-...) |
-       workshop       |             :443 --> TLS (Let's Encrypt cert)                    |
-                      |               |-- /api/ --> 127.0.0.1:3000 [backend]             |
+ (5) GOOGLE CLOUD VM  +------------------------------------------------------------------+
+     Compute Engine   | VM devops-workshop (e2-small), static IP devops-workshop-ip      |
+     Debian 13        | host nginx  :80  --> 301 to https (except /.well-known/acme-...) |
+     /opt/devops-     |             :443 --> TLS (Let's Encrypt cert)                    |
+       workshop       |               |-- /api/ --> 127.0.0.1:3000 [backend]             |
                       |               '-- /     --> 127.0.0.1:8080 [frontend]            |
                       | network "edge":            frontend, backend                     |
                       | network "data" (internal): backend --> [db] postgres :5432       |
                       +------------------------------------------------------------------+
                                      ^
-                                     | b) HTTPS :443 to that IP
-                                     |
+                                     | b) HTTPS :443 to that IP, let through by the VPC
+                                     |    firewall rule allow-http-https (outside the VM)
  (7) USER'S BROWSER  ----------------+
        |
        | a) "What is the IP of devops.gulfheight.com?"
        v
- (6) CLOUDFLARE DNS    A record  devops.gulfheight.com -> <server IPv4>   (gray cloud)
+ (6) CLOUDFLARE DNS    A record  devops.gulfheight.com -> <VM static IP>   (gray cloud)
 ```
 
 ### The runtime request path (production)
@@ -204,7 +208,7 @@ The same diagram in plain ASCII, for terminals and `less README.md`:
 flowchart LR
     B(["Browser"]) -->|"(1) resolve devops.gulfheight.com"| CF["Cloudflare DNS"]
     CF -.->|"orange cloud only:<br/>proxies the HTTPS traffic"| N
-    B -->|"(2) HTTPS :443<br/>(gray cloud: direct)"| N["host nginx<br/>TLS termination"]
+    B -->|"(2) HTTPS :443<br/>(gray cloud: direct)"| N["host nginx on the VM<br/>TLS termination"]
     N -->|"location /api/<br/>127.0.0.1:3000"| BE["backend<br/>Express API"]
     N -->|"location /<br/>127.0.0.1:8080"| FE["frontend<br/>nginx-unprivileged"]
     FE -.->|"own /api/ proxy, backend:3000<br/>via Docker DNS (CI + smoke tests)"| BE
@@ -213,9 +217,14 @@ flowchart LR
 
 A few facts that make this design work:
 
+- The VM's front door is the **GCP VPC firewall**, which filters in Google's network before a
+  packet reaches the VM: the rule `allow-http-https` opens tcp:80 and 443 to VMs with the network
+  tags `http-server` / `https-server`, and the default network's `default-allow-ssh` rule opens
+  tcp:22. There is no `ufw` on the VM.
 - Containers publish ports on **127.0.0.1 only**. Docker writes its own NAT rules for published
-  ports, so `ufw` would never see that traffic. Binding to loopback makes the host nginx the only
-  way in. The database is not published at all.
+  ports, so a host firewall such as `ufw` would never see that traffic, and on our VM the VPC
+  firewall would be the only layer left. Binding to loopback makes the host nginx the only way in,
+  whatever the firewall rules say. The database is not published at all.
 - The `data` network is `internal: true`. Only the backend is attached to both networks, so the
   frontend container cannot reach Postgres, and Postgres cannot reach the internet.
 - The host nginx sends `/api/` **straight to the backend**, which saves a hop. The frontend
@@ -277,7 +286,7 @@ A few facts that make this design work:
 ├── tests/integration/api.test.mjs     black-box API tests: node:test + fetch, zero dependencies
 ├── deploy/
 │   ├── deploy.sh                      on the server: validate, pull, up --wait, smoke test, prune
-│   ├── hetzner-server-setup.md        guide 1: server, SSH, ufw, Docker, nginx, first deploy
+│   ├── gcp-vm-setup.md                guide 1: GCE VM, static IP, VPC firewall, SSH, Docker, nginx, first deploy
 │   ├── cloudflare-dns-guide.md        guide 2: A record, gray vs orange cloud, SSL modes
 │   ├── letsencrypt-setup.md           guide 3: certbot, bootstrap -> production config, renewal
 │   └── nginx/
@@ -294,7 +303,7 @@ each line is there.
 ## Student guide
 
 Work through the parts in order. Parts 0 to 4 need only a laptop and free accounts. Parts 5 to 9
-need a server and a domain.
+need a Google Cloud project with billing enabled and a domain.
 
 ### Part 0: Prerequisites
 
@@ -305,7 +314,7 @@ need a server and a domain.
 | Git | any recent | `git --version` | |
 | Docker | Engine 24+ with the Compose v2 plugin, or Docker Desktop | `docker compose version` | Windows: use WSL 2 and keep the repo *inside* the WSL filesystem, because bind mounts from `C:\` are slow |
 | Node.js | 24 (optional) | `node --version` | Only needed to run lint, unit tests or integration tests *outside* containers. The frontend toolchain needs Node 20.19+, 22.13+ or 24 |
-| An SSH key | ed25519 | `ls ~/.ssh/id_ed25519.pub` | Created in Part 5 if you don't have one |
+| Google Cloud CLI | any recent | `gcloud --version` | Needed from Part 5 on. Install it from <https://cloud.google.com/sdk/docs/install>. `gcloud compute ssh` creates and uploads its own SSH key (`~/.ssh/google_compute_engine`) on first use |
 
 **Accounts**
 
@@ -313,7 +322,7 @@ need a server and a domain.
 |---------|------|----------|
 | GitHub | free | repository, pull requests, Actions |
 | Docker Hub | free | image registry (2 public repositories) |
-| Hetzner Cloud | a few euros per month, billed hourly | the production server (Parts 5 to 9) |
+| Google Cloud | pay-as-you-go, billed per second; estimate an e2-small in `europe-west3` with its disk and static IP in the [pricing calculator](https://cloud.google.com/products/calculator). New accounts get free-trial credit that covers a course comfortably. Delete everything afterwards: [costs and cleanup](deploy/gcp-vm-setup.md#15-costs-and-cleanup) | the production VM (Parts 5 to 9) |
 | Cloudflare + a domain | free plan | DNS. The course uses `gulfheight.com`; to use your own domain, see [the exercises](#make-it-your-own-exercises-and-stretch-goals) |
 
 **Skills**: basic terminal use (`cd`, `ls`, editing a file) and basic Git (`clone`, `commit`, `push`).
@@ -330,13 +339,13 @@ claim on a terminal:
 | 2. Namespaces | why three containers can all listen on "their" port without clashing (NET), and why your app is PID 1 (PID) |
 | 3. cgroups v2 | what `deploy.resources.limits` in `docker-compose.prod.yml` really does (and the OOM killer) |
 | 4. Overlay filesystem and layers | why the Dockerfiles copy `package*.json` before the source code |
-| 5. VMs vs containers | why we run containers *inside* a Hetzner VM |
+| 5. VMs vs containers | why we run containers *inside* a Google Compute Engine VM |
 | 6. Proof: the shared kernel | `uname -r` inside Alpine and Debian containers prints the host's kernel |
 | 7. [How this repo uses these concepts](docs/containers-deep-dive.md#7-how-this-repo-uses-these-concepts) | maps every production setting to the kernel feature behind it |
 | 8. Review questions | 14 quiz questions with hidden answers. Use them to test yourself |
 
 > [!TIP]
-> Run the experiments on a Linux machine, or later on your Hetzner server. Docker Desktop on
+> Run the experiments on a Linux machine, or later on your Google Cloud VM. Docker Desktop on
 > macOS and Windows runs containers inside a hidden VM, so some outputs differ. Chapter 6.6
 > explains the differences.
 
@@ -598,17 +607,17 @@ On GitHub, go to your repository -> **Settings -> Secrets and variables -> Actio
 |------|------|-----------|-------|---------|
 | Secret | `DOCKER_HUB_USERNAME` | **required** | your Docker Hub account name | `ci-main.yml` (login + image names) |
 | Secret | `DOCKER_HUB_ACCESS_TOKEN` | **required** | the token from 4.1 | `ci-main.yml` (login) |
-| Secret | `HETZNER_HOST` | auto-deploy only | the server's **IP address** (SSH does not pass through Cloudflare's orange cloud) | deploy job |
-| Secret | `HETZNER_USER` | auto-deploy only | `deploy` | deploy job |
-| Secret | `HETZNER_SSH_KEY` | auto-deploy only | the **private** key of a dedicated CI key pair, including the BEGIN/END lines | deploy job |
-| Secret | `HETZNER_KNOWN_HOSTS` | optional, recommended | output of `ssh-keyscan -t ed25519 <server-ip>`, after you have checked its fingerprint | deploy job (without it: trust-on-first-use plus a warning) |
+| Secret | `DEPLOY_HOST` | auto-deploy only | the VM's **static external IP** (`devops-workshop-ip`), not the domain: SSH does not pass through Cloudflare's orange cloud | deploy job |
+| Secret | `DEPLOY_USER` | auto-deploy only | `deploy` | deploy job |
+| Secret | `DEPLOY_SSH_KEY` | auto-deploy only | the **private** key of a dedicated CI key pair, including the BEGIN/END lines | deploy job |
+| Secret | `DEPLOY_KNOWN_HOSTS` | optional, recommended | output of `ssh-keyscan -t ed25519 <static-ip>`, after you have checked its fingerprint | deploy job (without it: trust-on-first-use plus a warning) |
 | Variable | `ENABLE_AUTO_DEPLOY` | optional | `true` turns on the deploy job | `ci-main.yml` |
 | Variable | `DEPLOY_PATH` | optional | repository path on the server; default `/opt/devops-workshop` | deploy job |
 
 `ci-dev.yml` and `ci-test.yml` need **no secrets**, so they work on a fresh fork. Section 14 of
-[`deploy/hetzner-server-setup.md`](deploy/hetzner-server-setup.md#14-optional-automatic-deploys-from-github-actions)
-explains how to create the CI key pair (with a `restrict` prefix in `authorized_keys`) and how to
-pin the host key.
+[`deploy/gcp-vm-setup.md`](deploy/gcp-vm-setup.md#14-optional-automatic-deploys-from-github-actions)
+explains how to create the CI key pair and how to
+[pin the VM's host key](deploy/gcp-vm-setup.md#142-pin-the-servers-host-key).
 
 > [!NOTE]
 > Forked the repository? Enable workflows in the **Actions** tab first. Add the Docker Hub secrets
@@ -620,25 +629,37 @@ pin the host key.
 |--------------------|------|-----------|
 | `ci-dev.yml` (**CI (dev)**) | 4 jobs (5 checks, because hadolint runs once per Dockerfile), in parallel | `npm ci` from the lockfile, ESLint, `node --test`, `vite build`, hadolint on both Dockerfiles, `shellcheck deploy/deploy.sh`, `docker compose config -q` on both files, plus a negative test that prod compose *refuses* to run without secrets |
 | `ci-test.yml` (**CI (test)**) | 1 job | builds both `production` targets, fails if an image runs as root, writes a throwaway `.env.ci` with random secrets, runs `docker compose -f docker-compose.prod.yml up -d --wait`, then the integration tests and curl smoke tests, dumps the logs on failure, and **always** runs `down -v` |
-| `ci-main.yml` (**CD (main)**) | `build` (matrix: backend, frontend) and an optional `deploy` | QEMU + Buildx build `linux/amd64,linux/arm64` (Hetzner sells x86 and Ampere Arm), pushes `:latest` and `:sha-<7 chars>`, bakes the short SHA in as `APP_VERSION` / `VITE_APP_VERSION`, caches layers in the GitHub Actions cache per service. `deploy` SSHes in and runs `cd /opt/devops-workshop && git pull --ff-only && ./deploy/deploy.sh sha-<short>`, then curls the public `/api/health` |
+| `ci-main.yml` (**CD (main)**) | `build` (matrix: backend, frontend) and an optional `deploy` | QEMU + Buildx build `linux/amd64,linux/arm64` (Compute Engine offers x86 VMs such as E2/N2 and Arm VMs: Tau T2A, Axion C4A), pushes `:latest` and `:sha-<7 chars>`, bakes the short SHA in as `APP_VERSION` / `VITE_APP_VERSION`, caches layers in the GitHub Actions cache per service. `deploy` SSHes in and runs `cd /opt/devops-workshop && git pull --ff-only && ./deploy/deploy.sh sha-<short>`, then curls the public `/api/health` |
 
 All workflows use `permissions: contents: read` (least privilege) and concurrency groups. CI runs
 cancel outdated runs; CD runs queue up and are never cancelled halfway through a release. You can
 also start any workflow by hand from the **Actions** tab (`workflow_dispatch`). The CD build job
 only pushes when it runs on `main`.
 
-### Part 5: Provision the Hetzner server
+### Part 5: Provision the Google Cloud VM
 
-Follow **[`deploy/hetzner-server-setup.md`](deploy/hetzner-server-setup.md)**. It is the first of
+Follow **[`deploy/gcp-vm-setup.md`](deploy/gcp-vm-setup.md)**. It is the first of
 three guides, and each one links to the next. In short:
 
-1. Create an ed25519 SSH key on your laptop.
-2. Create a **Debian 13** server in the Hetzner Cloud Console: CX22 (x86) or CAX11 (Arm). The
-   multi-arch images run on both.
-3. Update the system, create a non-root **`deploy`** user, and harden SSH (keys only, no root login).
-4. Turn on unattended security upgrades.
-5. Set up the firewall: `ufw` allows only 22, 80 and 443. Read section 7.2 to see **why Docker
-   bypasses ufw** and how loopback-only ports fix that.
+1. Select or create a Google Cloud project with **billing enabled**, enable the Compute Engine
+   API, install the `gcloud` CLI and set the defaults: region **`europe-west3`**, zone
+   **`europe-west3-a`**.
+2. [Reserve a static external IP](deploy/gcp-vm-setup.md#2-reserve-a-static-external-ip) named
+   **`devops-workshop-ip`**. The DNS record and the `DEPLOY_HOST` secret point at it, so it must
+   not change when the VM stops and starts (an *ephemeral* IP would).
+3. [Open ports 80 and 443](deploy/gcp-vm-setup.md#3-open-ports-80-and-443-vpc-firewall-rules) with
+   the VPC firewall rule **`allow-http-https`** (tcp:80,443) for VMs tagged `http-server` /
+   `https-server`. SSH on port 22 is already allowed by the default network's
+   `default-allow-ssh` rule. These rules filter in Google's network, *before* a packet reaches the
+   VM; there is no `ufw` on the VM. Docker-published ports would bypass a host firewall anyway,
+   which is why every container port binds to `127.0.0.1`.
+4. [Create the VM](deploy/gcp-vm-setup.md#4-create-the-vm) **`devops-workshop`**: machine type
+   **e2-small** (e2-medium for more headroom; the always-free e2-micro exists only in
+   `us-west1`, `us-central1` and `us-east1` and is tight for this stack), image family
+   `debian-13` from project `debian-cloud`, the static IP, and the network tags
+   `http-server,https-server`. Arm VMs (Tau T2A, Axion C4A) work too: the images are multi-arch.
+5. Log in with `gcloud compute ssh devops-workshop --zone=europe-west3-a`, update the system,
+   create a non-root **`deploy`** user, harden SSH, and turn on unattended security upgrades.
 6. Install Docker Engine from docker.com's apt repository, add `deploy` to the `docker` group
    (be aware that this group is equivalent to root), and install nginx from Debian's apt.
 7. Clone the repo to **`/opt/devops-workshop`** and create **`.env.prod`**:
@@ -654,18 +675,21 @@ three guides, and each one links to the next. In short:
 8. Run the first deploy with `./deploy/deploy.sh`. The app now runs on `127.0.0.1` only.
 
 > [!NOTE]
-> **Debian 12 "bookworm"** works too. The main difference is nginx 1.22, which does not know
-> `http2 on;`. The guide's [Debian 12 vs 13 table](deploy/hetzner-server-setup.md#debian-12-bookworm-vs-debian-13-trixie)
-> lists every difference.
+> **Debian 12 "bookworm"** works too (image family `debian-12`). The main difference for this
+> repo is nginx 1.22, which does not know `http2 on;`. The production nginx config keeps the
+> nginx 1.22 alternative as a comment (see the troubleshooting table in Part 10).
 
 ### Part 6: Cloudflare DNS
 
 Follow **[`deploy/cloudflare-dns-guide.md`](deploy/cloudflare-dns-guide.md)**.
 
 1. In the Cloudflare dashboard, open the zone `gulfheight.com` -> **DNS -> Records -> Add record**:
-   type `A`, name `devops`, IPv4 = your server, **Proxy status: DNS only (gray cloud)**, TTL Auto.
-   An AAAA record for IPv6 is optional.
-2. Verify from your laptop: `dig +short devops.gulfheight.com @1.1.1.1` must print your server's IP.
+   type `A`, name `devops`, IPv4 = the VM's **static external IP** (`devops-workshop-ip`),
+   **Proxy status: DNS only (gray cloud)**, TTL Auto. Do **not** add an AAAA record: a VM in the
+   default VPC network has no IPv6 address.
+2. Verify from your laptop: `dig +short devops.gulfheight.com @1.1.1.1` must print that static IP.
+   Print the IP with
+   `gcloud compute addresses describe devops-workshop-ip --region=europe-west3 --format='get(address)'`.
 
 Stay on the **gray cloud** while you get the certificate. You may switch to the orange cloud
 afterwards, but then the SSL/TLS mode **must** be **Full (strict)**. **Flexible** causes an
@@ -673,8 +697,8 @@ endless redirect loop. The guide explains why, and also how to restore real clie
 orange cloud.
 
 > [!TIP]
-> Create the DNS record as soon as you know the server's IP. Propagation then happens while you
-> finish Part 5.
+> Create the DNS record as soon as you have reserved the static IP (Part 5, step 2). The IP never
+> changes, so propagation happens while you finish Part 5.
 
 ### Part 7: HTTPS with Let's Encrypt
 
@@ -713,7 +737,8 @@ All deploys go through one script, [`deploy/deploy.sh`](deploy/deploy.sh). Run i
 the `deploy` user:
 
 ```bash
-ssh deploy@<server-ip>
+gcloud compute ssh devops-workshop --zone=europe-west3-a   # log in to the VM (your admin account)
+sudo -iu deploy                     # switch to the deploy user (or: ssh deploy@<static-ip>)
 cd /opt/devops-workshop
 git pull --ff-only                  # deploy.sh and docker-compose.prod.yml live in the repo
 
@@ -761,7 +786,8 @@ To find a tag, use any of these:
   set `IMAGE_TAG=sha-...` in `.env.prod`. The usual long-term fix is to `git revert` the bad commit
   on `dev` and promote it ("fix forward").
 
-**Automatic deploys:** add the `HETZNER_*` secrets and set the variable `ENABLE_AUTO_DEPLOY=true`
+**Automatic deploys:** add the `DEPLOY_HOST`, `DEPLOY_USER` and `DEPLOY_SSH_KEY` secrets (plus
+the recommended `DEPLOY_KNOWN_HOSTS`) and set the variable `ENABLE_AUTO_DEPLOY=true`
 (see [Part 4](#part-4-github-actions-and-secrets)). The deploy job runs in the GitHub environment
 **`production`**. Under *Settings -> Environments -> production* you can add **required reviewers**
 so that every release waits for a manual approval click.
@@ -788,7 +814,7 @@ curl -s https://devops.gulfheight.com/api/health; echo
 
 curl -sI http://devops.gulfheight.com/ | head -n 3        # 301 -> https://devops.gulfheight.com/
 curl -sI https://devops.gulfheight.com/ | grep -iE '^(HTTP|strict-transport)'
-curl -m 5 http://<server-ip>:3000/api/health              # MUST fail: the API is loopback-only
+curl -m 5 http://<static-ip>:3000/api/health              # MUST fail: VPC firewall + loopback-only port
 ```
 
 Then open **https://devops.gulfheight.com** in your browser. The page **footer** shows two versions:
@@ -832,8 +858,9 @@ sudo certbot certificates                        # certificate and expiry date
 | CI (dev): hadolint or shellcheck fails | a Dockerfile or shell best-practice rule (e.g. `DL3018`, `SC2086`) | fix it, or add a justified `# hadolint ignore=DLxxxx` comment above the line |
 | CI (test): "runs as root" | a Dockerfile lost its non-root `USER` line | restore `USER 1000:1000` (backend) / `USER 101` (frontend) |
 | CI (test): `up --wait` fails | a container crashed or its healthcheck failed | read the "Dump container state and logs" step |
-| Deploy job: `Permission denied (publickey)` | CI public key not in `~deploy/.ssh/authorized_keys`, wrong `HETZNER_USER`, or private key pasted without its BEGIN/END lines | see section 14 of the Hetzner guide |
-| Deploy job: `Host key verification failed` | `HETZNER_KNOWN_HOSTS` is stale (for example, the server was rebuilt) | regenerate it with `ssh-keyscan`, compare the fingerprint, update the secret |
+| Deploy job: `Permission denied (publickey)` | CI public key not in `~deploy/.ssh/authorized_keys`, wrong `DEPLOY_USER`, or private key pasted without its BEGIN/END lines | see [section 14 of the GCP VM guide](deploy/gcp-vm-setup.md#14-optional-automatic-deploys-from-github-actions) |
+| Deploy job: `Host key verification failed` | `DEPLOY_KNOWN_HOSTS` is stale (for example, the VM was deleted and recreated, which creates new host keys) | regenerate it with `ssh-keyscan`, compare the fingerprint, update the secret |
+| Deploy job: `ssh: connect to host ... port 22: Connection timed out` | `DEPLOY_HOST` is the domain (the orange cloud does not proxy SSH) or an old ephemeral IP, or `default-allow-ssh` was deleted or limited to your own IP (GitHub-hosted runners connect from many changing addresses) | set `DEPLOY_HOST` to the static IP; check `gcloud compute firewall-rules list` |
 | Deploy job: `fatal: Not possible to fast-forward, aborting.` | someone edited tracked files or committed on the server | run `git status` on the server, discard or stash the changes, and keep server config in `.env.prod` only |
 
 **Server, nginx, TLS, DNS**
@@ -849,10 +876,12 @@ sudo certbot certificates                        # certificate and expiry date
 | deploy.sh: "Containers did not become healthy" | crash on startup (missing `JWT_SECRET`, database auth) or out of memory | read the printed logs; `docker inspect --format '{{.State.OOMKilled}}' <container>` |
 | `nginx -t`: `cannot load certificate "/etc/letsencrypt/live/..."` | the production config was installed before the certificate existed | go back to the bootstrap config (Part 7, step 1) |
 | `nginx -t`: `unknown directive "http2"` | Debian 12 (nginx 1.22) | use `listen 443 ssl http2;` instead of `http2 on;` (commented in the config) |
-| certbot: `Timeout during connect (likely firewall problem)` | port 80 blocked by ufw or the Hetzner firewall, or DNS points elsewhere | `sudo ufw status`; `dig +short devops.gulfheight.com @1.1.1.1`; also check for a wrong **AAAA** record |
+| certbot: `Timeout during connect (likely firewall problem)` | port 80 blocked by the VPC firewall (rule `allow-http-https` missing, or the VM lacks the `http-server` tag), or DNS points elsewhere | see the next row; `dig +short devops.gulfheight.com @1.1.1.1`; also check for a stray **AAAA** record |
+| Site unreachable from outside (browser and `curl` time out), although nginx runs and `curl -I http://127.0.0.1/` on the VM answers | VPC firewall rule `allow-http-https` missing or disabled, or the VM lacks the `http-server` / `https-server` network tags the rule targets | `gcloud compute firewall-rules describe allow-http-https`; `gcloud compute instances describe devops-workshop --zone=europe-west3-a --format='value(tags.items)'`; add the tags with `gcloud compute instances add-tags devops-workshop --zone=europe-west3-a --tags=http-server,https-server` |
+| The IP changed after a VM stop/start: DNS and `DEPLOY_HOST` point to an address the VM no longer has | the VM used an **ephemeral** external IP, which is released on every stop | reserve a static one: promote the current IP with `gcloud compute addresses create devops-workshop-ip --addresses=<current-ip> --region=europe-west3`, then update the A record and `DEPLOY_HOST` |
 | certbot: `NXDOMAIN` / wrong IP | DNS record missing or not propagated | [Cloudflare guide](deploy/cloudflare-dns-guide.md#8-troubleshooting), section 8 |
 | **ERR_TOO_MANY_REDIRECTS** | Cloudflare orange cloud with SSL mode **Flexible** | SSL/TLS -> **Full (strict)** |
-| Cloudflare error **521 / 522 / 526** | origin down, firewall blocking Cloudflare, or invalid or expired origin certificate | `systemctl status nginx`, `sudo certbot certificates` |
+| Cloudflare error **521 / 522 / 526** | VM stopped, nginx down, VPC firewall blocking Cloudflare, or invalid or expired origin certificate | `gcloud compute instances list` (STATUS must be `RUNNING`), `systemctl status nginx`, `sudo certbot certificates` |
 | SSH to `devops.gulfheight.com` hangs | the orange cloud does not proxy SSH | SSH to the IP address instead |
 
 More detailed tables are in the [Let's Encrypt guide](deploy/letsencrypt-setup.md#8-troubleshooting)
@@ -974,8 +1003,9 @@ Run these in the production stack, for example the local rehearsal from
 
 **DevOps stretch goals**
 
-- **Backups.** Run a nightly `pg_dump` from cron or a systemd timer, copy it off the server
-  (Hetzner Storage Box or object storage), and practise a **restore**.
+- **Backups.** Run a nightly `pg_dump` from cron or a systemd timer, copy it off the VM
+  (for example to a Cloud Storage bucket with `gcloud storage cp`), add a snapshot schedule for
+  the VM's boot disk, and practise a **restore**.
 - **Security scanning.** Add a Trivy or Docker Scout step to `ci-test.yml` that fails on critical
   CVEs. Enable Dependabot for npm, GitHub Actions and Dockerfiles. Pin actions by commit SHA.
 - **Monitoring.** Point an uptime checker (e.g. Uptime Kuma) at `/api/health`. Add a Prometheus

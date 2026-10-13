@@ -9,14 +9,14 @@
 
 - Every command shown here was **run for real** while writing this chapter, on an Ubuntu 24.04 workstation
   (kernel `7.0.0-38-generic`, Docker Engine 29.3, cgroup v2, captured 2026-10-13). Blocks marked
-  **Captured** are copy-pasted output. Blocks marked **Expected on the Hetzner server** show what the same
-  commands print on our production box (Debian 13 "trixie", kernel 6.12); your version numbers,
-  IDs and IP addresses will differ slightly.
-- `$` is the shell prompt. Commands that need root are written with `sudo`; keep it on the Hetzner server
-  too, where you log in as the non-root `deploy` user (see `deploy/hetzner-server-setup.md`). A full prompt
-  such as `deploy@devops-workshop:~$` marks a session on the server (Hetzner sets the hostname to the
-  server name chosen in that guide). Inside code blocks, lines starting with `#` and the `<-` arrows are explanatory comments added
-  for this chapter, not output.
+  **Captured** are copy-pasted output. Blocks marked **Expected on the GCE VM** show what the same
+  commands print on our production box, a Google Compute Engine VM (Debian 13 "trixie", Debian's cloud
+  kernel 6.12); your version numbers, IDs and IP addresses will differ slightly.
+- `$` is the shell prompt. Commands that need root are written with `sudo`; keep it on the VM too, where
+  you work as the non-root `deploy` user (see `deploy/gcp-vm-setup.md`). A full prompt such as
+  `deploy@devops-workshop:~$` marks a session on the server (Compute Engine sets the hostname to the
+  instance name, `devops-workshop`, chosen in that guide). Inside code blocks, lines starting with `#` and
+  the `<-` arrows are explanatory comments added for this chapter, not output.
 - Commands use `alpine` and `debian` images because they are tiny and they have different userlands,
   which is exactly what makes the experiments convincing.
 
@@ -214,7 +214,7 @@ There is no `runc` in the tree: it did its job and exited. From the host's point
 
 > **Security note.** `dockerd` runs as root and anyone who can write to `/var/run/docker.sock` can ask it
 > to start a privileged container that mounts `/`. **Membership in the `docker` group is equivalent to
-> root.** Only add trusted admins to it (see `deploy/hetzner-server-setup.md`).
+> root.** Only add trusted admins to it (see `deploy/gcp-vm-setup.md`).
 
 ---
 
@@ -449,8 +449,8 @@ default via 192.168.240.1 dev eth0
 192.168.240.0/24 dev eth0 scope link  src 192.168.240.2
 ```
 
-(This workstation's `docker0` is configured for `192.168.240.0/24`; on a default install, such as the
-Hetzner server, you will see `172.17.0.x`.)
+(This workstation's `docker0` is configured for `192.168.240.0/24`; on a default install, such as our
+GCE VM, you will see `172.17.0.x`.)
 
 `eth0@if46` is one end of a **veth pair**, a virtual cable. The other end (interface index 46) lives in
 the host namespace and is plugged into the `docker0` bridge, a virtual switch. Outbound traffic is
@@ -486,7 +486,8 @@ $ docker run --rm --network none alpine ip addr   # Docker's equivalent: only lo
   DNS server at `127.0.0.11` (only on user-defined networks).
 - **Publishing a port** (`-p 127.0.0.1:3000:3000`) creates netfilter **DNAT** rules that forward
   host traffic into the container's namespace. Those packets go through the `FORWARD` chain, not
-  `INPUT`, which is why published ports bypass `ufw` (see [7](#7-how-this-repo-uses-these-concepts)).
+  `INPUT`, which is why published ports bypass host firewalls such as `ufw` or hand-written nftables
+  `INPUT` rules (see [7](#7-how-this-repo-uses-these-concepts)).
 - Strictly speaking, Docker sets `net.ipv4.ip_unprivileged_port_start=0` inside each container's network
   namespace (`docker run --rm alpine sysctl net.ipv4.ip_unprivileged_port_start` prints `0`), so a
   non-root process *could* bind port 80 under Docker. Images like `nginx-unprivileged` still use 8080 so they
@@ -565,7 +566,7 @@ $ ps -o pid,user,cmd -p $(docker inspect -f '{{.State.Pid}}' ns-demo)    # the c
  288766 root     sleep 300            <- the host sees a real root process
 ```
 
-**Expected on the Hetzner server** (Debian allows unprivileged user namespaces by default; run it as a
+**Expected on the GCE VM** (Debian allows unprivileged user namespaces by default; run it as a
 **normal user**, not root):
 
 ```console
@@ -724,7 +725,7 @@ max 100000                         <- unlimited CPU
 ```
 
 Gotcha: if you set `--memory` **without** `--memory-swap`, Docker allows the same amount again as swap.
-Hetzner Cloud images ship **without swap**, so there it makes no difference, but on a laptop with swap
+Compute Engine's Debian images ship **without swap**, so on our VM it makes no difference, but on a laptop with swap
 your "64 MB" container can use 128 MB:
 
 ```console
@@ -877,8 +878,9 @@ the counters above are read from the host side.
 
 ### 3.7 io: disk bandwidth
 
-`io.max` throttles bytes/s and IOPS per block device, identified by `MAJOR:MINOR` (see `lsblk`; on a
-Hetzner Cloud server the disk is usually `/dev/sda`, `8:0`). `oflag=direct` bypasses the page cache so
+`io.max` throttles bytes/s and IOPS per block device, identified by `MAJOR:MINOR` (see `lsblk`; on an
+E2 VM the boot disk is attached over virtio-SCSI and is usually `/dev/sda`, `8:0`, while newer machine
+series such as the Arm-based C4A attach disks over NVMe, `/dev/nvme0n1`, `259:0`). `oflag=direct` bypasses the page cache so
 that the write hits the disk immediately and the throttle is visible:
 
 ```console
@@ -1061,10 +1063,11 @@ flowchart TD
 
 **Hybrids are the norm.**
 
-- **Containers inside VMs: exactly what this course does.** A Hetzner Cloud server *is* a KVM virtual
-  machine. Hetzner's hypervisor isolates us from other customers (strong, hardware-backed boundary), and
-  inside our VM, Docker isolates the frontend, backend and database from each other (lightweight
-  boundary). Every major cloud does the same.
+- **Containers inside VMs: exactly what this course does.** Our Google Compute Engine instance *is* a
+  virtual machine, running on Google's KVM-based hypervisor. That hypervisor isolates us from other
+  customers on the same physical host (strong, hardware-backed boundary), and inside our VM, Docker
+  isolates the frontend, backend and database from each other (lightweight boundary). Every major cloud
+  does the same.
 - **Sandboxed container runtimes** keep the container *workflow* but strengthen the *boundary*:
   - **gVisor** (`runsc`): a user-space kernel written in Go intercepts the container's syscalls, so the
     host kernel's attack surface shrinks dramatically. Used by Google Cloud Run.
@@ -1101,34 +1104,36 @@ docker run --rm alpine cat /etc/os-release | head -2
 `uname` asks the kernel directly (the `uname()` system call). `/proc/version` is generated by the
 kernel on every read. `/etc/os-release` is an ordinary **file in the image**, describing the userland.
 
-### 6.2 Expected on the Hetzner server (Debian 13, x86 CX/CPX instance)
+### 6.2 Expected on the GCE VM (Debian 13, x86 E2 instance)
 
 ```console
 deploy@devops-workshop:~$ uname -a
-Linux devops-workshop 6.12.48+deb13-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.12.48-1 (2025-09-20) x86_64 GNU/Linux
+Linux devops-workshop 6.12.48+deb13-cloud-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.12.48-1 (2025-09-20) x86_64 GNU/Linux
 
 deploy@devops-workshop:~$ docker run --rm debian uname -a
-Linux 4f9e2b7c1a3d 6.12.48+deb13-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.12.48-1 (2025-09-20) x86_64 GNU/Linux
+Linux 4f9e2b7c1a3d 6.12.48+deb13-cloud-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.12.48-1 (2025-09-20) x86_64 GNU/Linux
 
 deploy@devops-workshop:~$ docker run --rm alpine uname -a
-Linux 8b1e0c94f2aa 6.12.48+deb13-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.12.48-1 (2025-09-20) x86_64 Linux
+Linux 8b1e0c94f2aa 6.12.48+deb13-cloud-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.12.48-1 (2025-09-20) x86_64 Linux
 #     ^^^^^^^^^^^^ hostname = container ID (UTS namespace)
-#                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ identical kernel
+#                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ identical kernel
 
 deploy@devops-workshop:~$ cat /proc/version
-Linux version 6.12.48+deb13-amd64 (debian-kernel@lists.debian.org) (x86_64-linux-gnu-gcc-14 (Debian 14.2.0-19) 14.2.0, GNU ld (GNU Binutils for Debian) 2.44) #1 SMP PREEMPT_DYNAMIC Debian 6.12.48-1 (2025-09-20)
+Linux version 6.12.48+deb13-cloud-amd64 (debian-kernel@lists.debian.org) (x86_64-linux-gnu-gcc-14 (Debian 14.2.0-19) 14.2.0, GNU ld (GNU Binutils for Debian) 2.44) #1 SMP PREEMPT_DYNAMIC Debian 6.12.48-1 (2025-09-20)
 deploy@devops-workshop:~$ docker run --rm alpine cat /proc/version
-Linux version 6.12.48+deb13-amd64 (debian-kernel@lists.debian.org) (x86_64-linux-gnu-gcc-14 (Debian 14.2.0-19) 14.2.0, GNU ld (GNU Binutils for Debian) 2.44) #1 SMP PREEMPT_DYNAMIC Debian 6.12.48-1 (2025-09-20)
+Linux version 6.12.48+deb13-cloud-amd64 (debian-kernel@lists.debian.org) (x86_64-linux-gnu-gcc-14 (Debian 14.2.0-19) 14.2.0, GNU ld (GNU Binutils for Debian) 2.44) #1 SMP PREEMPT_DYNAMIC Debian 6.12.48-1 (2025-09-20)
 
 deploy@devops-workshop:~$ docker run --rm alpine cat /etc/os-release | head -2
 NAME="Alpine Linux"
 ID=alpine
 ```
 
-An **Alpine userland running on a Debian kernel**, built with Debian's GCC 14. The exact patch version
-(`6.12.48`) depends on when you last ran `apt upgrade` and rebooted. On an **ARM (CAX, Ampere)** server
-you would see `6.12.x+deb13-arm64 ... aarch64`. On **Debian 12** the kernel string uses the older naming
-scheme, for example `6.1.0-40-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.1.153-1 ...`.
+An **Alpine userland running on a Debian kernel**, built with Debian's GCC 14. The `-cloud-` in the
+release name is Debian's **cloud kernel** flavour (package `linux-image-cloud-amd64`), which Google's
+Debian images ship: a kernel trimmed to the virtual hardware that cloud VMs actually have. The exact patch
+version (`6.12.48`) depends on when you last ran `apt upgrade` and rebooted. On an **Arm** VM (Tau T2A,
+Axion C4A) you would see `6.12.x+deb13-cloud-arm64 ... aarch64`. On **Debian 12** the kernel string uses
+the older naming scheme, for example `6.1.0-40-cloud-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.1.153-1 ...`.
 
 ### 6.3 Captured on the author's Ubuntu 24.04 workstation
 
@@ -1248,7 +1253,7 @@ Every production decision in this repository maps to a kernel concept from this 
 ```mermaid
 flowchart LR
     Browser(["Browser"])
-    subgraph HOST["Hetzner Cloud VM: one Debian 13 kernel shared by everything inside"]
+    subgraph HOST["Google Compute Engine VM: one Debian 13 kernel shared by everything inside"]
         HN["host nginx :443<br/>(host network namespace)"]
         subgraph EDGE["network bugsquash_edge (bridge)"]
             FE["frontend<br/>nginx-unprivileged, uid 101<br/>64M / 0.25 CPU, read-only"]
@@ -1274,7 +1279,7 @@ flowchart LR
 | **USER** (no userns), capabilities | both Dockerfiles, `security_opt` | `USER 1000:1000` (the image's `node` user); `nginx-unprivileged`; `no-new-privileges:true` |
 | **MNT namespace** + overlay | `read_only: true` + `tmpfs: /tmp` | read-only root filesystem, writable RAM scratch space |
 | **Layers** | both Dockerfiles, `.dockerignore` | multi-stage builds (backend: `base` / `dev` / `prod-deps` / `production`; frontend: `dev` / `build` / `production`), dependency layer before the source layer |
-| Shared kernel, multi-arch | [`.github/workflows/ci-main.yml`](../.github/workflows/ci-main.yml) | `platforms: linux/amd64,linux/arm64` (Hetzner x86 and Ampere ARM) |
+| Shared kernel, multi-arch | [`.github/workflows/ci-main.yml`](../.github/workflows/ci-main.yml) | `platforms: linux/amd64,linux/arm64` (Compute Engine x86 VMs such as E2/N2, and Arm VMs: Tau T2A, Axion C4A) |
 
 ### 7.1 Resource limits = cgroups
 
@@ -1315,9 +1320,11 @@ talk only to containers that share a network with it:
   a cryptominer).
 - `backend` joins **both** networks: it is the only path from the outside world to the data.
 - **Ports are bound to `127.0.0.1` only.** Published ports are implemented as netfilter DNAT rules that
-  forward packets into the container's namespace, *before* `ufw`'s `INPUT` rules are consulted.
-  `"3000:3000"` would expose the API to the internet despite `ufw deny 3000`. Bound to loopback, only the
-  host nginx, running in the **host's** network namespace, can reach them.
+  forward packets into the container's namespace, *before* a host firewall's `INPUT` rules (`ufw`,
+  firewalld, your own nftables rules) are consulted. `"3000:3000"` would slip past such a firewall
+  entirely; on our VM only the GCP VPC firewall rules, which filter outside the VM, would still stand
+  between the API and the internet, one loosened rule away from exposure. Bound to loopback, only the
+  host nginx, running in the **host's** network namespace, can reach them, whatever the firewalls say.
 - Inside the frontend container, nginx proxies `/api/` to `backend:3000` using Docker's DNS server
   (`resolver 127.0.0.11`). That address is a loopback address *inside the container's network namespace*,
   served by `dockerd` (see `app/frontend/nginx.conf`).
@@ -1427,8 +1434,9 @@ tmpfs /tmp is writable
 
 ### 7.7 Containers inside a VM
 
-Our Hetzner server is a KVM virtual machine (hardware-isolated from other customers), and our three
-containers share its Debian kernel (lightweight isolation from each other). That is the hybrid from 5.4.
+Our Google Compute Engine VM runs on Google's KVM-based hypervisor (hardware-isolated from other
+customers), and our three containers share its Debian cloud kernel (lightweight isolation from each
+other). That is exactly the hybrid from 5.4.
 `uname -r` inside any of them prints the VM's kernel, as in 6.2.
 
 ---
@@ -1449,7 +1457,7 @@ isolated views.
 <details>
 <summary><strong>Q2.</strong> On the Debian 13 server, what does <code>docker run --rm alpine uname -r</code> print, and why?</summary>
 
-The **host's** kernel release, for example `6.12.48+deb13-amd64`. `uname()` is a system call answered by
+The **host's** kernel release, for example `6.12.48+deb13-cloud-amd64`. `uname()` is a system call answered by
 the one running kernel. The image contains only a userland: Alpine's `/etc/os-release` says Alpine, but
 the kernel is Debian's.
 </details>
@@ -1501,12 +1509,14 @@ containers share the host's clocks, which is normally what you want.)
 </details>
 
 <details>
-<summary><strong>Q8.</strong> Why is <code>ports: ["3000:3000"]</code> dangerous on a ufw-protected server, while <code>"127.0.0.1:3000:3000"</code> is safe?</summary>
+<summary><strong>Q8.</strong> Why is <code>ports: ["3000:3000"]</code> dangerous even on a server with a host firewall such as ufw, while <code>"127.0.0.1:3000:3000"</code> is safe?</summary>
 
 Docker implements published ports with netfilter **DNAT** rules that forward packets into the container's
-network namespace via the `FORWARD` path, so they never meet ufw's `INPUT` rules. `3000:3000` listens on
-all interfaces, including the public IP. Binding to `127.0.0.1` makes it reachable only from the host
-itself (our host nginx).
+network namespace via the `FORWARD` path, so they never meet the host firewall's `INPUT` rules.
+`3000:3000` listens on all interfaces, including the one the public traffic arrives on. On our GCE VM
+the VPC firewall, outside the VM, would still drop port 3000 today, but that is a single layer that one
+over-broad rule removes. Binding to `127.0.0.1` makes it reachable only from the host itself (our host
+nginx), regardless of any firewall.
 </details>
 
 <details>
@@ -1585,7 +1595,7 @@ container is a process on the already-running host kernel. Loading modules is al
 | **Image** | Read-only, layered template (filesystem layers + config) from which containers start. |
 | **init / PID 1** | First process of a PID namespace; gets special signal semantics and must reap zombies. |
 | **Kata Containers** | OCI runtime that runs each container inside a lightweight VM. |
-| **KVM** | Linux's built-in hypervisor; Hetzner Cloud servers are KVM VMs. |
+| **KVM** | Linux's built-in hypervisor; Google Compute Engine VMs run on a KVM-based hypervisor. |
 | **Layer** | One filesystem diff in an image, created by a `RUN`/`COPY`/`ADD` instruction. |
 | **LinuxKit / WSL2** | The Linux VMs used by Docker Desktop on macOS and Windows. |
 | **Namespace** | Kernel feature giving a process its own view of a global resource (PID, NET, MNT, UTS, IPC, USER, CGROUP, TIME). |

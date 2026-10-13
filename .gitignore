@@ -1,0 +1,66 @@
+# =============================================================================
+# .gitignore - Bug Squash Arena
+# -----------------------------------------------------------------------------
+# Rule of thumb: commit SOURCE and TEMPLATES, never generated output or SECRETS.
+# Anything that `npm ci`, `vite build` or `docker compose` can recreate stays out
+# of Git; anything that contains a real password or token MUST stay out of Git.
+# =============================================================================
+
+# ---- Dependencies (recreated by `npm ci` from package-lock.json) -------------
+node_modules/
+
+# ---- Build output (recreated by `npm run build` / the Docker "build" stage) --
+dist/
+build/
+coverage/
+.vite/
+*.tsbuildinfo
+
+# ---- Secrets / environment files ---------------------------------------------
+# Real env files hold passwords and JWT secrets. They are created by copying a
+# template on each machine and are NEVER committed:
+#   cp .env.example .env               (local development)
+#   cp .env.prod.example .env.prod     (production server)
+#   .env.ci is a throwaway file written by the ci-test workflow.
+.env
+.env.*
+# ...but the templates themselves are documentation and MUST be committed.
+# The "!" prefix re-includes a file that an earlier pattern excluded.
+!.env.example
+!.env.prod.example
+
+# ---- Logs ---------------------------------------------------------------------
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---- Runtime / misc -----------------------------------------------------------
+*.pid
+*.seed
+*.pid.lock
+.eslintcache
+.npm/
+tmp/
+*.tmp
+
+# ---- OS junk ------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ---- Editors / IDEs ------------------------------------------------------------
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-workspace
+.history/

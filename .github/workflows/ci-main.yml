@@ -8,9 +8,10 @@
 #   build  : one job per service (matrix), each pushes
 #              <user>/bugsquash-<service>:latest
 #              <user>/bugsquash-<service>:sha-<7-char commit>   (immutable)
-#            for linux/amd64 AND linux/arm64 - Hetzner sells both x86 and
-#            Ampere ARM servers, and one multi-arch tag serves both: Docker
-#            pulls the matching variant automatically.
+#            for linux/amd64 AND linux/arm64 - Google Compute Engine offers
+#            both x86 VMs (E2, N2, ...) and Arm VMs (Tau T2A, Axion C4A), and
+#            one multi-arch tag serves both: Docker pulls the matching
+#            variant automatically.
 #   deploy : OPTIONAL. Runs only if the repository variable
 #            ENABLE_AUTO_DEPLOY is "true". SSHes into the server and runs
 #            deploy/deploy.sh with the exact sha-<short> tag just built.
@@ -21,10 +22,12 @@
 #                             Personal access tokens, scope Read & Write).
 #                             Never use your account password.
 # Only for auto-deploy:
-#   HETZNER_HOST              server IP or hostname
-#   HETZNER_USER              SSH user on the server (member of the docker group)
-#   HETZNER_SSH_KEY           PRIVATE key of a dedicated deploy key pair
-#   HETZNER_KNOWN_HOSTS       (optional, recommended) output of
+#   DEPLOY_HOST               the VM's static external IP (not the
+#                             Cloudflare-proxied domain: SSH does not pass
+#                             through Cloudflare's proxy)
+#   DEPLOY_USER               SSH user on the VM (member of the docker group)
+#   DEPLOY_SSH_KEY            PRIVATE key of a dedicated deploy key pair
+#   DEPLOY_KNOWN_HOSTS        (optional, recommended) output of
 #                             `ssh-keyscan <server>` checked by hand once
 # Repository VARIABLES (not secret):
 #   ENABLE_AUTO_DEPLOY        "true" to enable the deploy job
@@ -135,7 +138,7 @@ jobs:
 
   # ---------------------------------------------------------------------------
   deploy:
-    name: Deploy to Hetzner
+    name: Deploy to Google Cloud VM
     # `needs` = wait until BOTH matrix legs of `build` succeeded.
     needs: build
     # Opt-in switch, so the repo works for students who have no server yet.
@@ -152,9 +155,9 @@ jobs:
       # nothing magic - it is exactly what you would type in a terminal.
       - name: Configure SSH
         env:
-          SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
-          SSH_HOST: ${{ secrets.HETZNER_HOST }}
-          KNOWN_HOSTS: ${{ secrets.HETZNER_KNOWN_HOSTS }}
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          SSH_HOST: ${{ secrets.DEPLOY_HOST }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
           install -m 700 -d ~/.ssh
           # Secrets reach the script through env vars, not by pasting an
@@ -168,7 +171,7 @@ jobs:
           else
             # Fallback: trust-on-first-use. Vulnerable to a man-in-the-middle
             # on this very connection, hence the warning.
-            echo "::warning::HETZNER_KNOWN_HOSTS secret not set - trusting the host key via ssh-keyscan"
+            echo "::warning::DEPLOY_KNOWN_HOSTS secret not set - trusting the host key via ssh-keyscan"
             ssh-keyscan -T 15 -H "$SSH_HOST" > ~/.ssh/known_hosts
           fi
           chmod 600 ~/.ssh/known_hosts
@@ -178,8 +181,8 @@ jobs:
       # not "latest" - so a rollback is just `./deploy/deploy.sh sha-<older>`.
       - name: Run deploy script on the server
         env:
-          SSH_HOST: ${{ secrets.HETZNER_HOST }}
-          SSH_USER: ${{ secrets.HETZNER_USER }}
+          SSH_HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
         run: |
           image_tag="sha-${GITHUB_SHA::7}"

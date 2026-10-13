@@ -18,8 +18,10 @@ Both are installed under **the same name**:
 
 ## 0. Prerequisites
 
-* Server prepared with [`hetzner-server-setup.md`](hetzner-server-setup.md):
-  nginx installed, ufw allows 80 and 443, app deployed with `./deploy/deploy.sh`.
+* Google Cloud VM prepared with [`gcp-vm-setup.md`](gcp-vm-setup.md):
+  nginx installed, the VPC firewall rule `allow-http-https` opens tcp:80 and
+  tcp:443 to VMs tagged `http-server` / `https-server` (and the VM carries those
+  tags), app deployed with `./deploy/deploy.sh`.
 * DNS set up with [`cloudflare-dns-guide.md`](cloudflare-dns-guide.md), record
   in **DNS only (gray cloud)** mode:
 
@@ -259,13 +261,24 @@ Logs first: `/var/log/letsencrypt/letsencrypt.log` and
 **Port 80 blocked** - certbot reports *"Timeout during connect (likely firewall problem)"*.
 
 ```bash
-deploy@server$ sudo ufw status                          # 80/tcp must be ALLOW
 deploy@server$ sudo ss -tlnp | grep -E ':80\b'          # nginx must listen on 0.0.0.0:80
-laptop$ curl -I http://203.0.113.10/                    # from OUTSIDE the server
+deploy@server$ curl -I -H 'Host: devops.gulfheight.com' http://127.0.0.1/   # works ON the VM?
+laptop$ curl -I http://203.0.113.10/                    # ...and from OUTSIDE?
+laptop$ gcloud compute firewall-rules describe allow-http-https   # allowed, sourceRanges, targetTags, disabled
+laptop$ gcloud compute instances describe devops-workshop --zone=europe-west3-a \
+          --format='value(tags.items)'                  # must include http-server
 ```
 
-Also check the Hetzner Cloud Firewall (if you created one) - it filters
-before ufw ever sees the packet.
+If `curl` works on the VM but times out from your laptop, the packet is
+dropped by the **VPC firewall**, which filters in Google's network before it
+ever reaches the VM: the rule is missing or disabled, its source range is too
+narrow (e.g. restricted to Cloudflare's IPs, see the DNS guide), or the VM
+lacks the network tag the rule targets. Add the tags with:
+
+```bash
+laptop$ gcloud compute instances add-tags devops-workshop --zone=europe-west3-a \
+          --tags=http-server,https-server
+```
 
 **DNS not propagated / wrong** - *"DNS problem: NXDOMAIN looking up A for
 devops.gulfheight.com"* or the CA connects to a wrong IP.

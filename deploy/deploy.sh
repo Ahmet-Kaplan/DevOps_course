@@ -2,7 +2,7 @@
 # =============================================================================
 # deploy/deploy.sh - pull and (re)start Bug Squash Arena on the production server
 # -----------------------------------------------------------------------------
-# Usage (on the Hetzner server, as the non-root "deploy" user):
+# Usage (on the Google Cloud VM, as the non-root "deploy" user):
 #
 #   ./deploy/deploy.sh                 # deploy IMAGE_TAG from .env.prod ("latest")
 #   ./deploy/deploy.sh sha-1a2b3c4     # deploy - or ROLL BACK to - an exact build
@@ -168,7 +168,7 @@ printf '%sBug Squash Arena - production deploy%s  %s(repo: %s)%s\n' \
 step 1 "Pre-flight checks"
 # =============================================================================
 command -v docker >/dev/null 2>&1 \
-  || die "docker not found. Install Docker Engine first (deploy/hetzner-server-setup.md)."
+  || die "docker not found. Install Docker Engine first (deploy/gcp-vm-setup.md, step 8)."
 
 docker compose version >/dev/null 2>&1 \
   || die "The Docker Compose v2 plugin is missing ('docker compose'). Install the docker-compose-plugin package."

@@ -1,7 +1,8 @@
 # =============================================================================
 # docker-compose.prod.yml - PRODUCTION stack for Bug Squash Arena
 # -----------------------------------------------------------------------------
-# Runs on the Hetzner server (Debian 13), normally via ./deploy/deploy.sh:
+# Runs on the Google Cloud VM (Compute Engine, Debian 13), normally via
+# ./deploy/deploy.sh:
 #     docker compose -f docker-compose.prod.yml --env-file .env.prod pull
 #     docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --wait
 #
@@ -120,9 +121,12 @@ services:
       # LOOPBACK ONLY - this matters more than it looks! Docker publishes ports
       # with its own iptables/nftables NAT rules: incoming packets are rewritten
       # (DNAT) to the container IP and FORWARDED, so they never traverse the
-      # INPUT chain where ufw's rules live. "3000:3000" would expose the API to
-      # the whole internet even with `ufw deny 3000`. Binding to 127.0.0.1
-      # means only the host nginx (same machine) can reach it.
+      # INPUT chain where a host firewall (ufw, firewalld, your own nftables
+      # rules) filters. "3000:3000" would slip past any such firewall; on our
+      # GCE VM only the VPC firewall rules, outside the VM, would still stand
+      # between the API and the internet - one loosened rule away from
+      # exposure. Binding to 127.0.0.1 means only the host nginx (same
+      # machine) can reach it, whatever the firewalls say.
       - "127.0.0.1:3000:3000"
     networks:
       - edge   # reachable by the frontend container (and published port)

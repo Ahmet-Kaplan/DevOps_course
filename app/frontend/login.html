@@ -1,0 +1,101 @@
+<!doctype html>
+<!--
+  Log-in page. The form posts with fetch() (src/js/auth-form.js), not a classic
+  form submit, so we can show inline errors without a page reload. On success the
+  backend sets an httpOnly cookie and we redirect to /dashboard.html.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Log in | Bug Squash Arena</title>
+    <meta name="description" content="Log in to Bug Squash Arena and get back to squashing." />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#0f5b44" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/src/styles/main.css" />
+    <script type="module" src="/src/js/login.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="site-header__inner">
+        <a class="brand" href="/">
+          <img class="brand__icon" src="/favicon.svg" alt="" width="32" height="32" />
+          <span class="brand__name">Bug Squash Arena</span>
+        </a>
+        <nav class="site-nav" aria-label="Account" data-site-nav>
+          <a class="site-nav__link" href="/login.html" aria-current="page">Log in</a>
+          <a class="btn btn--primary btn--small" href="/signup.html">Sign up</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main" class="page page--narrow" tabindex="-1">
+      <section class="sheet auth" aria-labelledby="auth-title">
+        <h1 id="auth-title" class="auth__title">Log in</h1>
+        <p class="auth__lede">Pick up where your last round left off.</p>
+
+        <!--
+          novalidate: we still use the native constraint attributes (required,
+          maxlength) for autofill/password managers, but we render our own inline
+          messages so they look the same in every browser.
+        -->
+        <form id="login-form" class="form" novalidate>
+          <!-- Always in the DOM so screen readers announce messages inserted into it. -->
+          <div class="form__alert" data-form-alert aria-live="assertive"></div>
+
+          <div class="field">
+            <label class="field__label" for="username">Username</label>
+            <input
+              class="field__input"
+              id="username"
+              name="username"
+              type="text"
+              autocomplete="username"
+              autocapitalize="none"
+              spellcheck="false"
+              required
+              maxlength="20"
+              aria-describedby="username-error"
+            />
+            <p class="field__error" id="username-error" data-error-for="username"></p>
+          </div>
+
+          <div class="field">
+            <label class="field__label" for="password">Password</label>
+            <div class="field__password">
+              <input
+                class="field__input"
+                id="password"
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                required
+                maxlength="72"
+                aria-describedby="password-error"
+              />
+              <button
+                class="field__toggle"
+                type="button"
+                data-toggle-password
+                aria-controls="password"
+                aria-pressed="false"
+              >
+                Show
+              </button>
+            </div>
+            <p class="field__error" id="password-error" data-error-for="password"></p>
+          </div>
+
+          <button class="btn btn--primary btn--block" type="submit" data-submit>Log in</button>
+        </form>
+
+        <p class="auth__switch">New here? <a href="/signup.html">Create an account</a></p>
+      </section>
+    </main>
+
+    <footer class="site-footer" data-site-footer></footer>
+  </body>
+</html>

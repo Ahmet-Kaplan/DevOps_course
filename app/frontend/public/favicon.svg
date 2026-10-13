@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Bug Squash Arena icon: the game's bug on a square of circuit board. Colors are fixed
+       (no CSS) because favicons are rendered outside the page and cannot see our tokens. -->
+  <rect width="64" height="64" rx="14" fill="#0f5b44"/>
+  <path d="M0 50h14l6-6M64 14H50l-6 6" fill="none" stroke="#1f7556" stroke-width="3"/>
+  <g fill="none" stroke="#eaf2ec" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M23 29 15 23 10 25M21 37H11l-4 4M23 45l-9 7-3 5"/>
+    <path d="M41 29l8-6 5 2M43 37h10l4 4M41 45l9 7 3 5"/>
+    <path d="M29 13Q25 5 19 6M35 13Q39 5 45 6" stroke-width="3"/>
+  </g>
+  <ellipse cx="32" cy="18" rx="7.5" ry="6" fill="#2b0b10" stroke="#eaf2ec" stroke-width="1.5"/>
+  <ellipse cx="32" cy="38" rx="13.5" ry="16.5" fill="#e0313f" stroke="#2b0b10" stroke-width="2"/>
+  <path d="M32 23v31" stroke="#2b0b10" stroke-width="2" opacity=".6"/>
+  <circle cx="26" cy="33" r="2.8" fill="#2b0b10"/><circle cx="38" cy="33" r="2.8" fill="#2b0b10"/>
+  <circle cx="26" cy="44" r="2.3" fill="#2b0b10"/><circle cx="38" cy="44" r="2.3" fill="#2b0b10"/>
+</svg>

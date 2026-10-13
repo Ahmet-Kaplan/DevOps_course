@@ -1,0 +1,107 @@
+<!doctype html>
+<!--
+  Sign-up page. The hints below mirror the backend's validation rules
+  (username 3-20 chars of [a-zA-Z0-9_], password 8-72 chars). The browser checks
+  them first for fast feedback; the server checks them again because anything
+  running in the browser can be bypassed.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Create an account | Bug Squash Arena</title>
+    <meta name="description" content="Create a Bug Squash Arena account and get on the leaderboard." />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#0f5b44" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/src/styles/main.css" />
+    <script type="module" src="/src/js/signup.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="site-header__inner">
+        <a class="brand" href="/">
+          <img class="brand__icon" src="/favicon.svg" alt="" width="32" height="32" />
+          <span class="brand__name">Bug Squash Arena</span>
+        </a>
+        <nav class="site-nav" aria-label="Account" data-site-nav>
+          <a class="site-nav__link" href="/login.html">Log in</a>
+          <a class="btn btn--primary btn--small" href="/signup.html" aria-current="page">Sign up</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main" class="page page--narrow" tabindex="-1">
+      <section class="sheet auth" aria-labelledby="auth-title">
+        <h1 id="auth-title" class="auth__title">Create an account</h1>
+        <p class="auth__lede">
+          Pick the name you want on the leaderboard. Your first round starts right after.
+        </p>
+
+        <form id="signup-form" class="form" novalidate>
+          <div class="form__alert" data-form-alert aria-live="assertive"></div>
+
+          <div class="field">
+            <label class="field__label" for="username">Username</label>
+            <input
+              class="field__input"
+              id="username"
+              name="username"
+              type="text"
+              autocomplete="username"
+              autocapitalize="none"
+              spellcheck="false"
+              required
+              minlength="3"
+              maxlength="20"
+              pattern="[A-Za-z0-9_]+"
+              aria-describedby="username-hint username-error"
+            />
+            <p class="field__hint" id="username-hint">
+              3 to 20 characters: letters, numbers and underscores.
+            </p>
+            <p class="field__error" id="username-error" data-error-for="username"></p>
+          </div>
+
+          <div class="field">
+            <label class="field__label" for="password">Password</label>
+            <div class="field__password">
+              <input
+                class="field__input"
+                id="password"
+                name="password"
+                type="password"
+                autocomplete="new-password"
+                required
+                minlength="8"
+                maxlength="72"
+                aria-describedby="password-hint password-error"
+              />
+              <button
+                class="field__toggle"
+                type="button"
+                data-toggle-password
+                aria-controls="password"
+                aria-pressed="false"
+              >
+                Show
+              </button>
+            </div>
+            <p class="field__hint" id="password-hint">8 to 72 characters.</p>
+            <p class="field__error" id="password-error" data-error-for="password"></p>
+          </div>
+
+          <button class="btn btn--primary btn--block" type="submit" data-submit>
+            Create account
+          </button>
+        </form>
+
+        <p class="auth__switch">Already have an account? <a href="/login.html">Log in</a></p>
+      </section>
+    </main>
+
+    <footer class="site-footer" data-site-footer></footer>
+  </body>
+</html>

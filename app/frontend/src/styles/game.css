@@ -1,0 +1,364 @@
+/*
+ * The arena: a printed circuit board with a bug on it.
+ * This is the one loud element on the site; everything else stays quiet paper.
+ */
+
+.game {
+  --bug-size: 56px;
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* ------------------------------------------------------------------ HUD: time + score */
+.game__hud {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.game__stat {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.game__label {
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.game__value {
+  min-width: 3ch;
+  font-family: var(--font-mono);
+  font-size: var(--step-4);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+.game__stat--score .game__value {
+  text-align: right;
+}
+
+.game.is-urgent [data-time] {
+  color: var(--bug);
+}
+
+/* The fuse burns down from full to empty over the 10-second round. */
+.game__fuse {
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+  overflow: hidden;
+}
+
+.game__fuse-fill {
+  display: block;
+  height: 100%;
+  background: var(--pad);
+  transform-origin: left;
+  transform: scaleX(var(--fuse, 1));
+}
+
+.game.is-urgent .game__fuse-fill {
+  background: var(--bug);
+}
+
+/* ------------------------------------------------------------------ the board */
+.game__board {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  /* An explicit width matters: with only aspect-ratio + min-height, the browser
+     derives a *minimum width* from the min-height (260 x 1.6 = 416px) and the
+     board overflows narrow phones. With width set, min-height only adds height. */
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  min-height: 260px;
+  margin-top: var(--space-2);
+  margin-bottom: 6px; /* room for the board-edge shadow */
+  border-radius: var(--radius-board);
+  background-color: var(--board);
+  /* Four plated mounting holes, one per corner. The hole shows the page through it. */
+  background-image:
+    radial-gradient(circle at 18px 18px, var(--paper) 0 5px, var(--pad) 5.5px 9px, transparent 9.5px),
+    radial-gradient(circle at calc(100% - 18px) 18px, var(--paper) 0 5px, var(--pad) 5.5px 9px, transparent 9.5px),
+    radial-gradient(circle at 18px calc(100% - 18px), var(--paper) 0 5px, var(--pad) 5.5px 9px, transparent 9.5px),
+    radial-gradient(
+      circle at calc(100% - 18px) calc(100% - 18px),
+      var(--paper) 0 5px,
+      var(--pad) 5.5px 9px,
+      transparent 9.5px
+    );
+  /* Inner line = copper edge; the hard bottom shadow reads as the board's thickness. */
+  box-shadow:
+    inset 0 0 0 2px var(--board-edge),
+    0 6px 0 var(--board-deep);
+  /* Rapid tapping must not select text, zoom the page or open the iOS callout. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+}
+
+/* A fly swatter cursor while a round is running (falls back to a crosshair). */
+.game.is-running .game__board {
+  cursor: url("/swatter.svg") 11 11, crosshair;
+}
+
+.game__art {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.pcb__traces {
+  stroke: var(--trace);
+}
+
+.pcb__vias circle {
+  fill: var(--board-deep);
+  stroke: var(--pad);
+  stroke-width: 3;
+  opacity: 0.85;
+}
+
+.pcb__pad {
+  fill: var(--pad);
+  opacity: 0.85;
+}
+
+.pcb__chip-body {
+  fill: var(--chip);
+}
+
+.pcb__chip-dot {
+  fill: var(--silk);
+  opacity: 0.5;
+}
+
+.pcb__parts rect {
+  fill: var(--board-deep);
+  stroke: var(--silk);
+  stroke-width: 1.5;
+  opacity: 0.8;
+}
+
+.pcb__silk {
+  fill: var(--silk);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+/* ------------------------------------------------------------------ the bug */
+.bug {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  width: var(--bug-size);
+  height: var(--bug-size);
+  padding: 4px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: inherit;
+  /* game.js only sets --x/--y/--r; the transform keeps movement on the compositor. */
+  transform: translate(var(--x, 0), var(--y, 0)) rotate(var(--r, 0deg));
+  transition: transform 90ms ease-out;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.bug:focus-visible {
+  outline-color: var(--focus-on-board);
+  outline-offset: 0;
+}
+
+.bug-art {
+  width: 100%;
+  height: 100%;
+  /* A faint light halo keeps the dark legs visible on the green board. */
+  filter: drop-shadow(0 0 1.5px rgb(255 255 255 / 0.55)) drop-shadow(0 3px 0 rgb(0 0 0 / 0.3));
+}
+
+.bug-art__shell {
+  fill: var(--bug);
+}
+
+.bug-art__head,
+.bug-art__spots {
+  fill: var(--bug-dark);
+}
+
+.bug-art__legs,
+.bug-art__antennae {
+  stroke: var(--bug-dark);
+}
+
+.bug-art__seam {
+  stroke: var(--bug-dark);
+  opacity: 0.6;
+}
+
+.bug-art__eyes {
+  fill: #fff;
+}
+
+.game.is-running .bug-art__legs {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: scuttle 140ms steps(2) infinite alternate;
+}
+
+@keyframes scuttle {
+  from {
+    transform: scaleY(0.9);
+  }
+  to {
+    transform: scaleY(1.06);
+  }
+}
+
+/* ------------------------------------------------------------------ splats ("+1 race condition") */
+.splat {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  pointer-events: none;
+  transform: translate(var(--x), var(--y));
+}
+
+.splat__mark {
+  position: absolute;
+  top: -22px;
+  left: -22px;
+  width: 44px;
+  height: 44px;
+  border-radius: 58% 42% 63% 37% / 45% 60% 40% 55%;
+  background: var(--bug);
+  opacity: 0;
+  animation: splat-mark 700ms ease-out forwards;
+}
+
+.splat__text {
+  position: absolute;
+  top: -12px;
+  left: 0;
+  translate: -50% 0;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  font-weight: 800;
+  color: var(--silk);
+  text-shadow: 0 1px 0 rgb(0 0 0 / 0.6);
+  animation: splat-text 700ms ease-out forwards;
+}
+
+@keyframes splat-mark {
+  0% {
+    opacity: 0.8;
+    transform: scale(0.3);
+  }
+  30% {
+    opacity: 0.6;
+    transform: scale(1.1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
+}
+
+@keyframes splat-text {
+  0% {
+    opacity: 0;
+    transform: translateY(0);
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-34px);
+  }
+}
+
+/* ------------------------------------------------------------------ overlay (start / result) */
+.game__overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-5);
+  text-align: center;
+  color: var(--silk);
+  background: color-mix(in srgb, var(--board-deep) 84%, transparent);
+}
+
+.game__overlay-title {
+  font-family: var(--font-mono);
+  font-size: var(--step-3);
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.04em;
+}
+
+.game__overlay[data-tone="error"] .game__overlay-title {
+  color: #ffb3b8;
+}
+
+.game__overlay-text {
+  max-width: 44ch;
+}
+
+.game__overlay .btn {
+  margin-top: var(--space-2);
+}
+
+.game__overlay .btn:focus-visible {
+  outline-color: var(--focus-on-board);
+}
+
+/* ------------------------------------------------------------------ small screens + reduced motion */
+@media (max-width: 480px) {
+  .game {
+    --bug-size: 52px;
+  }
+
+  .game__value {
+    font-size: var(--step-3);
+  }
+
+  .game__overlay-title {
+    font-size: var(--step-2);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Splats appear and disappear without moving; the bug jumps without gliding. */
+  .splat__mark,
+  .splat__text {
+    animation-name: none;
+  }
+
+  .splat__mark {
+    opacity: 0.55;
+  }
+
+  .game.is-running .bug-art__legs {
+    animation-name: none;
+  }
+}

@@ -1,0 +1,432 @@
+/* Reusable pieces: buttons, sheets, forms, notices, scoreboard, logbook, badge. */
+
+/* ------------------------------------------------------------------ buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 2.75rem; /* 44px touch target */
+  padding: var(--space-2) var(--space-5);
+  border: 2px solid var(--ink);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--ink);
+  font-weight: 700;
+  line-height: 1.2;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    transform 80ms ease;
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+/* Gold, like a solder pad: the thing you are meant to press. */
+.btn--primary {
+  background: var(--pad);
+  border-color: var(--pad);
+  color: var(--on-pad);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--pad-hover);
+  border-color: var(--pad-hover);
+}
+
+.btn--secondary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.btn--ghost {
+  border-color: transparent;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.btn--ghost:hover:not(:disabled) {
+  border-color: var(--rule);
+}
+
+.btn--small {
+  min-height: 2.5rem;
+  padding: var(--space-1) var(--space-4);
+  font-size: var(--step--1);
+}
+
+.btn--large {
+  min-height: 3.25rem;
+  padding: var(--space-3) var(--space-6);
+  font-size: var(--step-1);
+}
+
+.btn--block {
+  width: 100%;
+}
+
+/* ------------------------------------------------------------------ sheets (paper panels) */
+.sheet {
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sheet);
+  padding: var(--space-5);
+}
+
+.sheet__title,
+.section-title {
+  font-family: var(--font-mono);
+  font-size: var(--step-2);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.sheet__note {
+  margin-top: var(--space-1);
+  color: var(--ink-soft);
+  font-size: var(--step--1);
+}
+
+.sheet__title + [data-leaderboard],
+.sheet__note + [data-leaderboard],
+.sheet__title + .logbook {
+  margin-top: var(--space-4);
+}
+
+.empty {
+  color: var(--ink-soft);
+  max-width: 50ch;
+}
+
+/* ------------------------------------------------------------------ notices */
+.notice {
+  display: block;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-control);
+  border-left: 4px solid currentColor;
+}
+
+.notice--error {
+  color: var(--danger);
+  background: var(--danger-surface);
+}
+
+.notice .btn {
+  margin-top: var(--space-3);
+}
+
+/* ------------------------------------------------------------------ forms */
+.form {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.form__alert:empty {
+  margin-bottom: calc(-1 * var(--space-5)); /* collapse the grid gap while there is nothing to say */
+}
+
+.field {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.field__label {
+  font-weight: 700;
+}
+
+.field__input {
+  width: 100%;
+  min-height: 3rem;
+  padding: var(--space-2) var(--space-3);
+  border: 2px solid var(--rule);
+  border-radius: var(--radius-control);
+  background: var(--paper);
+  font-family: var(--font-mono);
+  font-size: var(--step-1);
+}
+
+.field__input:hover {
+  border-color: var(--ink-soft);
+}
+
+.field__input:focus-visible {
+  border-color: var(--ink);
+  outline-offset: 2px;
+}
+
+.field__input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.field__password {
+  position: relative;
+}
+
+.field__password .field__input {
+  padding-right: 5rem;
+}
+
+.field__toggle {
+  position: absolute;
+  top: 50%;
+  right: var(--space-2);
+  transform: translateY(-50%);
+  min-width: 4rem;
+  min-height: 2.25rem;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-weight: 700;
+  font-size: var(--step--1);
+  cursor: pointer;
+}
+
+.field__toggle:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.field__hint {
+  color: var(--ink-soft);
+  font-size: var(--step--1);
+}
+
+.field__error {
+  color: var(--danger);
+  font-weight: 600;
+  font-size: var(--step--1);
+}
+
+.field__error:empty {
+  display: none;
+}
+
+/* ------------------------------------------------------------------ scoreboard (leaderboard table) */
+.scoreboard {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.scoreboard th {
+  text-align: left;
+  font-family: var(--font-sans);
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink-soft);
+  padding: 0 var(--space-2) var(--space-2);
+  border-bottom: 2px solid var(--ink);
+}
+
+.scoreboard td {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--rule);
+}
+
+.scoreboard__rank {
+  width: 3.5rem;
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.scoreboard__player {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.scoreboard .scoreboard__best {
+  text-align: right; /* the .scoreboard prefix lets this beat `.scoreboard th` above */
+}
+
+.scoreboard td.scoreboard__best {
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: var(--step-1);
+}
+
+/* Podium: ranks 1-3 get a gold pad behind the number. */
+.scoreboard__row:nth-child(-n + 3) .scoreboard__rank::before {
+  content: "";
+  display: inline-block;
+  width: 0.6em;
+  height: 0.6em;
+  margin-right: 0.4em;
+  border-radius: 2px;
+  background: var(--pad);
+  vertical-align: 0.05em;
+}
+
+.scoreboard__row--me td {
+  background: color-mix(in srgb, var(--pad) 22%, transparent);
+}
+
+.scoreboard__you {
+  font-weight: 400;
+  color: var(--ink-soft);
+}
+
+/* ------------------------------------------------------------------ logbook (recent rounds) */
+/* Ruled lines are drawn by the background so the page looks like a logbook even when short. */
+.logbook {
+  list-style: none;
+  padding: 0;
+  --line: 2.75rem;
+  min-height: calc(var(--line) * 4);
+  background-image: linear-gradient(transparent calc(var(--line) - 1px), var(--rule) calc(var(--line) - 1px));
+  background-size: 100% var(--line);
+}
+
+.logbook__entry,
+.logbook__empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: var(--line);
+}
+
+.logbook__empty {
+  color: var(--ink-soft);
+  /* Half a ruled line, so a two-line message fills exactly one ruled slot. */
+  line-height: calc(var(--line) / 2);
+}
+
+.logbook__time {
+  color: var(--ink-soft);
+  font-size: var(--step--1);
+}
+
+.logbook__score {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------ badge (rank card) */
+/* An on-call staff ID badge: a board-green strip, a punched lanyard slot, your rank. */
+.badge {
+  position: relative;
+  background: var(--paper-raised);
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.badge::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  width: 46px;
+  height: 9px;
+  translate: -50% 0;
+  border-radius: 5px;
+  background: var(--paper);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.35);
+}
+
+.badge__strip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-5) var(--space-3);
+  background: var(--board);
+  color: var(--silk);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: var(--step--1);
+}
+
+.badge__strip img {
+  border-radius: 4px;
+}
+
+.badge__body {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-5);
+}
+
+.badge__name {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.badge__rank {
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: var(--step-3);
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+}
+
+.badge__motto {
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+.badge__stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px dashed var(--rule);
+}
+
+.badge__stat {
+  display: flex;
+  flex-direction: column-reverse; /* number first visually, label stays first for screen readers */
+  gap: var(--space-1);
+}
+
+.badge__stat dt {
+  font-size: var(--step--1);
+  color: var(--ink-soft);
+}
+
+.badge__stat dd {
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: var(--step-4);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.badge__progress {
+  margin-top: var(--space-3);
+  display: grid;
+  gap: var(--space-2);
+}
+
+.badge__next {
+  font-size: var(--step--1);
+  color: var(--ink-soft);
+}
+
+.meter {
+  height: 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+  overflow: hidden;
+}
+
+.meter__fill {
+  display: block;
+  height: 100%;
+  background: var(--pad);
+  transform-origin: left;
+  transform: scaleX(var(--fill, 0));
+  transition: transform 400ms ease;
+}

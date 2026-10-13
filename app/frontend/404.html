@@ -1,0 +1,48 @@
+<!doctype html>
+<!--
+  Custom 404 page. nginx serves it for any path that matches no file
+  (error_page 404 /404.html in nginx.conf). It is built by Vite like the other
+  pages, so it gets the same hashed CSS and JS.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Page not found | Bug Squash Arena</title>
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#0f5b44" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/src/styles/main.css" />
+    <script type="module" src="/src/js/not-found.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="site-header__inner">
+        <a class="brand" href="/">
+          <img class="brand__icon" src="/favicon.svg" alt="" width="32" height="32" />
+          <span class="brand__name">Bug Squash Arena</span>
+        </a>
+        <nav class="site-nav" aria-label="Account" data-site-nav>
+          <a class="site-nav__link" href="/login.html">Log in</a>
+          <a class="btn btn--primary btn--small" href="/signup.html">Sign up</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main" class="page page--narrow" tabindex="-1">
+      <section class="not-found" aria-labelledby="not-found-title">
+        <p class="not-found__code" aria-hidden="true">404</p>
+        <h1 id="not-found-title" class="not-found__title">This page escaped.</h1>
+        <p class="not-found__text">
+          The link might be broken, or the bug got here first. Either way, there is nothing at this
+          address.
+        </p>
+        <a class="btn btn--primary btn--large" href="/">Back to the start</a>
+      </section>
+    </main>
+
+    <footer class="site-footer" data-site-footer></footer>
+  </body>
+</html>

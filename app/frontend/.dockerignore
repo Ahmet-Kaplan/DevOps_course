@@ -1,0 +1,27 @@
+# Everything listed here is left out of the build context: the directory the
+# Docker client sends to the builder. Smaller context = faster builds, and no
+# accidental leaks of local files into an image layer.
+
+# Installed inside the image by `npm ci` (for the right OS and CPU), never copied
+# from the host: a macOS node_modules would not even run on Alpine Linux.
+node_modules
+
+# Build output is produced inside the image.
+dist
+.vite
+
+# Secrets and local env files must never end up in an image layer.
+.env
+.env.*
+
+# Logs and editor/OS noise
+npm-debug.log*
+*.log
+.DS_Store
+.idea
+.vscode
+coverage
+
+# Files that only describe the build itself
+Dockerfile
+.dockerignore

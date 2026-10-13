@@ -1,0 +1,156 @@
+/* Page frame: header, main column, footer. */
+
+.site-header {
+  border-bottom: 1px solid var(--rule);
+  background-color: color-mix(in srgb, var(--paper) 88%, transparent);
+}
+
+.site-header__inner {
+  max-width: var(--page-max);
+  margin-inline: auto;
+  padding: var(--space-3) var(--gutter);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-5);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  text-decoration: none;
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: var(--step-1);
+  letter-spacing: -0.03em;
+}
+
+.brand__icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+}
+
+.site-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  min-height: 2.5rem;
+}
+
+.site-nav__link {
+  font-weight: 600;
+  padding: var(--space-2) var(--space-1);
+}
+
+.site-nav__link[aria-current="page"] {
+  text-decoration-thickness: 2px;
+}
+
+.site-nav__user {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+
+/* Main column */
+.page {
+  flex: 1;
+  width: 100%;
+  max-width: var(--page-max);
+  margin-inline: auto;
+  padding: var(--space-6) var(--gutter) var(--space-8);
+}
+
+.page--narrow {
+  max-width: 34rem;
+}
+
+.page-status {
+  font-family: var(--font-mono);
+  color: var(--ink-soft);
+  padding-block: var(--space-7);
+}
+
+.page-status--error {
+  color: var(--danger);
+}
+
+/* Footer: the deploy indicator lives here (see layout.js). */
+.site-footer {
+  border-top: 1px solid var(--rule);
+  font-size: var(--step--1);
+  color: var(--ink-soft);
+}
+
+.site-footer__inner {
+  max-width: var(--page-max);
+  margin-inline: auto;
+  padding: var(--space-5) var(--gutter);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-6);
+}
+
+.versions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+}
+
+.versions__item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.versions__item dt {
+  font-weight: 600;
+}
+
+.versions__item dd {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+/* Version strings are code identifiers (a short git SHA such as 1a2b3c4), so they are set in mono. */
+.versions__value {
+  font-family: var(--font-mono);
+  color: var(--ink);
+}
+
+.versions__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+}
+
+.versions__state:empty {
+  display: none;
+}
+
+.versions__state::before {
+  content: "";
+  width: 0.55em;
+  height: 0.55em;
+  border-radius: 50%;
+  background: var(--ink-soft);
+}
+
+.versions__state[data-state="up"]::before {
+  background: var(--ok);
+}
+
+.versions__state[data-state="degraded"]::before {
+  background: var(--warn);
+}
+
+.versions__state[data-state="down"]::before {
+  background: var(--danger);
+}

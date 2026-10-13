@@ -1,0 +1,120 @@
+<!doctype html>
+<!--
+  Landing page (/). Public: anyone can read the leaderboard and play a practice
+  round. Logged-in visitors get an "Enter the arena" button instead of the
+  sign-up CTAs (see src/js/index.js).
+
+  How Vite handles this file:
+    * in dev (npm run dev) it is served as-is and /src/... paths are transformed on the fly;
+    * in a build (npm run build) the <link> and <script> tags below are rewritten
+      to hashed files under /assets/ (for example /assets/index-3fa9c1.js), which is
+      what lets nginx cache them for a year. See nginx.conf.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bug Squash Arena</title>
+    <meta
+      name="description"
+      content="A ten-second bug-squashing clicker game with a class leaderboard. Built for a DevOps course."
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#0f5b44" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/src/styles/main.css" />
+    <script type="module" src="/src/js/index.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="site-header__inner">
+        <a class="brand" href="/">
+          <img class="brand__icon" src="/favicon.svg" alt="" width="32" height="32" />
+          <span class="brand__name">Bug Squash Arena</span>
+        </a>
+        <!-- Default (logged-out) navigation. layout.js swaps it when a session exists. -->
+        <nav class="site-nav" aria-label="Account" data-site-nav>
+          <a class="site-nav__link" href="/login.html">Log in</a>
+          <a class="btn btn--primary btn--small" href="/signup.html">Sign up</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main" class="page" tabindex="-1">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero__copy">
+          <h1 id="hero-title" class="hero__title">
+            <s class="hero__strike">It works on my machine.</s>
+            <span class="hero__line">Squash the bug before it ships.</span>
+          </h1>
+          <p class="hero__lede">
+            Ten-second rounds, one bug that won't sit still, and a leaderboard that remembers
+            everything. Find out who in class has the fastest reflexes.
+          </p>
+          <div class="hero__actions" data-hero-actions>
+            <a class="btn btn--primary btn--large" href="/signup.html">Create account</a>
+            <a class="btn btn--secondary btn--large" href="/login.html">Log in</a>
+          </div>
+        </div>
+
+        <div class="hero__game">
+          <!-- game.js renders the circuit-board arena in here (practice mode: nothing is saved). -->
+          <div class="game" data-game="practice"></div>
+        </div>
+      </section>
+
+      <div class="landing-grid">
+        <section class="sheet" aria-labelledby="leaderboard-title">
+          <h2 id="leaderboard-title" class="sheet__title">Leaderboard</h2>
+          <p class="sheet__note">Top 10 players by best round.</p>
+          <div data-leaderboard></div>
+        </section>
+
+        <div class="landing-aside">
+          <section aria-labelledby="how-title">
+            <h2 id="how-title" class="section-title">How a round works</h2>
+            <ol class="steps">
+              <li class="steps__item">
+                <strong class="steps__name">Start the clock.</strong>
+                You get ten seconds.
+              </li>
+              <li class="steps__item">
+                <strong class="steps__name">Squash the bug.</strong>
+                Click or tap it as fast as you can. It jumps every time you hit it, and whenever it
+                gets bored. Keyboard players can press Enter or Space on the focused bug.
+              </li>
+              <li class="steps__item">
+                <strong class="steps__name">Ship the score.</strong>
+                Your round is saved when the clock hits zero. The server rejects anything over 200,
+                so the browser console won't help you.
+              </li>
+            </ol>
+          </section>
+
+          <aside class="logbook-note" aria-labelledby="history-title">
+            <h2 id="history-title" class="section-title">Why “bug”?</h2>
+            <p>
+              On 9 September 1947, operators of the Harvard Mark II computer found a moth trapped in
+              a relay and taped it into their logbook:
+            </p>
+            <blockquote class="logbook-note__quote">
+              <p>
+                <span class="logbook-note__time">1545</span>
+                Relay #70 Panel F (moth) in relay. First actual case of bug being found.
+              </p>
+            </blockquote>
+            <p>
+              Engineers had called glitches “bugs” for decades. This one just happened to be
+              literal.
+            </p>
+          </aside>
+        </div>
+      </div>
+    </main>
+
+    <!-- Filled by layout.js: shows the frontend build version and the live API version. -->
+    <footer class="site-footer" data-site-footer></footer>
+  </body>
+</html>

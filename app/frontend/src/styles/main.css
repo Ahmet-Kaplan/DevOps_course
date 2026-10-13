@@ -1,0 +1,12 @@
+/*
+ * Single stylesheet entry, linked from every HTML page.
+ * Vite inlines these @imports at build time into one hashed file
+ * (/assets/main-<hash>.css), so the browser still makes a single request.
+ * Order matters: tokens first, page-specific rules last.
+ */
+@import "./tokens.css";
+@import "./base.css";
+@import "./layout.css";
+@import "./components.css";
+@import "./game.css";
+@import "./pages.css";

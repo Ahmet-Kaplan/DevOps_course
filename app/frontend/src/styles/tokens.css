@@ -1,0 +1,101 @@
+/*
+ * Design tokens. Every color, font and spacing value in the app comes from here,
+ * so the dark theme is just a second set of values for the same names.
+ *
+ * The visual idea, in one sentence: the site is an operator's logbook (cool
+ * graph paper, navy ink), and the arena is a printed circuit board, the one loud
+ * object on the page. Red is reserved for the bug and for errors; gold marks the
+ * things you can press, like the solder pads on a board.
+ */
+:root {
+  color-scheme: light dark;
+
+  /* Logbook paper */
+  --paper: #e9eeea;
+  --paper-raised: #f6f8f6;
+  --grid-line: rgb(27 42 58 / 0.055);
+  --rule: #b9c6c0;
+  --ink: #1b2a3a;
+  --ink-soft: #4a5b6b;
+
+  /* Circuit board (the arena) */
+  --board: #0f5b44;
+  --board-deep: #0a4434;
+  --board-edge: #2e8b67;
+  --trace: #1f7556;
+  --chip: #15241f;
+  --pad: #d8a93b;
+  --pad-hover: #e6bb52;
+  --on-pad: #1b2a3a;
+  --silk: #eaf2ec;
+
+  /* Signals */
+  --bug: #e0313f;
+  --bug-dark: #2b0b10;
+  --danger: #b3261e;
+  --danger-surface: #f9e1de;
+  --ok: #1e7148;
+  --warn: #8a5a00;
+  --focus: #1d4ed8;
+  --focus-on-board: #f2c14e;
+
+  /* Type: system stacks only (no web fonts, no external requests). */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Cascadia Code", "JetBrains Mono", "Roboto Mono",
+    Menlo, Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace;
+
+  /* Type scale: major third (x1.25) */
+  --step--1: 0.875rem;
+  --step-0: 1rem;
+  --step-1: 1.25rem;
+  --step-2: 1.5625rem;
+  --step-3: 1.953rem;
+  --step-4: 2.441rem;
+  --step-5: 3.052rem;
+
+  /* Spacing */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4.5rem;
+
+  /* Shape: radius grows with the "physicality" of the object */
+  --radius-sheet: 4px;
+  --radius-control: 8px;
+  --radius-board: 18px;
+
+  --page-max: 74rem;
+  --gutter: clamp(16px, 4vw, 40px);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Night shift: the same logbook under a desk lamp */
+    --paper: #101c27;
+    --paper-raised: #172633;
+    --grid-line: rgb(227 235 240 / 0.045);
+    --rule: #2d4255;
+    --ink: #e3ebf0;
+    --ink-soft: #9db0bf;
+
+    --board: #0e5240;
+    --board-deep: #093a2e;
+    --board-edge: #2c7a5e;
+    --trace: #1b6a4f;
+    --chip: #0d1915;
+    --pad: #e2b64f;
+    --pad-hover: #efc768;
+    --silk: #dde9e2;
+
+    --bug: #ff4d5a;
+    --danger: #ff8a80;
+    --danger-surface: #3a1d22;
+    --ok: #6fd3a0;
+    --warn: #f2c14e;
+    --focus: #f2c14e;
+  }
+}

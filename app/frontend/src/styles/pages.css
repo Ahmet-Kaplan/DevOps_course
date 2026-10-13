@@ -1,0 +1,294 @@
+/* Page-specific layout: landing hero, landing grid, dashboard grid, auth forms, 404. */
+
+/* ------------------------------------------------------------------ landing hero */
+.hero {
+  display: grid;
+  gap: var(--space-6);
+  align-items: center;
+  padding-bottom: var(--space-8);
+}
+
+.hero__copy {
+  display: grid;
+  gap: var(--space-5);
+  justify-items: start;
+}
+
+/* The headline edits itself: the excuse gets struck out in red pencil. */
+.hero__title {
+  display: grid;
+  gap: 0.3em;
+  font-family: var(--font-mono);
+  font-size: clamp(2.1rem, 1.3rem + 3.4vw, 3.9rem);
+  font-weight: 800;
+  line-height: 1.02;
+  letter-spacing: -0.045em;
+}
+
+.hero__strike {
+  justify-self: start;
+  font-size: 0.48em;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--ink-soft);
+  text-decoration-line: line-through;
+  text-decoration-color: var(--bug);
+  text-decoration-thickness: 0.16em;
+  text-decoration-skip-ink: none;
+}
+
+.hero__lede {
+  max-width: 42ch;
+  font-size: var(--step-1);
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-4);
+}
+
+.hero__welcome {
+  font-family: var(--font-mono);
+  color: var(--ink-soft);
+}
+
+/* ------------------------------------------------------------------ landing: leaderboard + notes */
+.landing-grid {
+  display: grid;
+  gap: var(--space-7);
+  align-items: start;
+}
+
+.landing-aside {
+  display: grid;
+  gap: var(--space-7);
+}
+
+/* A real sequence, so it is numbered: three gold pads. */
+.steps {
+  list-style: none;
+  padding: 0;
+  margin-top: var(--space-4);
+  display: grid;
+  gap: var(--space-5);
+  counter-reset: step;
+}
+
+.steps__item {
+  position: relative;
+  max-width: 60ch;
+  padding-left: 3rem;
+  color: var(--ink-soft);
+  counter-increment: step;
+}
+
+.steps__item::before {
+  content: counter(step);
+  position: absolute;
+  top: -0.15rem;
+  left: 0;
+  width: 2rem;
+  height: 2rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--pad);
+  color: var(--on-pad);
+  font-family: var(--font-mono);
+  font-weight: 800;
+}
+
+.steps__name {
+  display: block;
+  color: var(--ink);
+}
+
+/* The 1947 logbook entry, taped in. */
+.logbook-note {
+  display: grid;
+  gap: var(--space-4);
+  max-width: 60ch;
+  color: var(--ink-soft);
+}
+
+.logbook-note .section-title {
+  color: var(--ink);
+}
+
+.logbook-note__quote {
+  position: relative;
+  margin: var(--space-2) 0;
+  padding: var(--space-5) var(--space-5) var(--space-4);
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  font-family: var(--font-mono);
+  color: var(--ink);
+  rotate: -0.6deg;
+}
+
+.logbook-note__quote::before,
+.logbook-note__quote::after {
+  content: "";
+  position: absolute;
+  top: -9px;
+  width: 64px;
+  height: 20px;
+  background: color-mix(in srgb, var(--pad) 40%, transparent);
+}
+
+.logbook-note__quote::before {
+  left: 18px;
+  rotate: -5deg;
+}
+
+.logbook-note__quote::after {
+  right: 18px;
+  rotate: 4deg;
+}
+
+.logbook-note__time {
+  margin-right: 0.6em;
+  font-weight: 800;
+}
+
+@media (min-width: 960px) {
+  .hero {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+    gap: var(--space-7);
+  }
+
+  .landing-grid {
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  }
+}
+
+/* ------------------------------------------------------------------ dashboard */
+.dashboard {
+  display: grid;
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.dashboard__game {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.dashboard__title {
+  font-family: var(--font-mono);
+  font-size: var(--step-3);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+@media (min-width: 700px) and (max-width: 999px) {
+  .dashboard {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "game game"
+      "badge recent"
+      "board board";
+  }
+}
+
+@media (min-width: 1000px) {
+  .dashboard {
+    grid-template-columns: minmax(0, 1fr) 21rem;
+    grid-template-areas:
+      "game badge"
+      "game recent"
+      "board board";
+    column-gap: var(--space-7);
+  }
+}
+
+@media (min-width: 700px) {
+  .dashboard__game {
+    grid-area: game;
+  }
+
+  .dashboard__badge {
+    grid-area: badge;
+  }
+
+  .dashboard__recent {
+    grid-area: recent;
+  }
+
+  .dashboard__leaderboard {
+    grid-area: board;
+  }
+}
+
+/* ------------------------------------------------------------------ auth forms */
+.auth {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-5);
+}
+
+.auth__title {
+  font-family: var(--font-mono);
+  font-size: var(--step-4);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.045em;
+}
+
+.auth__lede {
+  color: var(--ink-soft);
+}
+
+.auth .form {
+  margin-top: var(--space-4);
+}
+
+.auth__switch {
+  margin-top: var(--space-3);
+  color: var(--ink-soft);
+}
+
+.auth__switch a {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+@media (min-width: 560px) {
+  .auth {
+    padding: var(--space-7);
+  }
+}
+
+/* ------------------------------------------------------------------ 404 */
+.not-found {
+  display: grid;
+  gap: var(--space-4);
+  justify-items: start;
+  padding-block: var(--space-6);
+}
+
+.not-found__code {
+  font-family: var(--font-mono);
+  font-size: clamp(5rem, 22vw, 9rem);
+  font-weight: 800;
+  line-height: 0.9;
+  letter-spacing: -0.07em;
+  color: var(--board);
+}
+
+.not-found__title {
+  font-family: var(--font-mono);
+  font-size: var(--step-3);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+.not-found__text {
+  max-width: 45ch;
+  color: var(--ink-soft);
+  margin-bottom: var(--space-3);
+}

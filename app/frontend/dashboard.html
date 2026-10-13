@@ -1,0 +1,87 @@
+<!doctype html>
+<!--
+  Dashboard (protected). This page is a static file like every other page, so
+  nginx will happily serve it to anyone. The *protection* lives in two places:
+    1. dashboard.js calls GET /api/auth/me first and redirects to /login.html on 401;
+    2. the backend refuses every /api/scores/me or POST /api/scores call without a
+       valid cookie. Hiding UI is convenience; the API is the real security boundary.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Arena | Bug Squash Arena</title>
+    <meta name="description" content="Play ranked rounds, track your best score and climb the leaderboard." />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#0f5b44" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/src/styles/main.css" />
+    <script type="module" src="/src/js/dashboard.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="site-header__inner">
+        <a class="brand" href="/">
+          <img class="brand__icon" src="/favicon.svg" alt="" width="32" height="32" />
+          <span class="brand__name">Bug Squash Arena</span>
+        </a>
+        <!-- Empty until we know who is logged in; layout.js fills it. -->
+        <nav class="site-nav" aria-label="Account" data-site-nav></nav>
+      </div>
+    </header>
+
+    <main id="main" class="page" tabindex="-1">
+      <p class="page-status" data-page-status role="status">Checking your badge…</p>
+
+      <div class="dashboard" data-dashboard hidden>
+        <section class="dashboard__game" aria-labelledby="arena-title">
+          <h1 id="arena-title" class="dashboard__title">Arena</h1>
+          <!-- game.js renders the arena here (ranked mode: every round is saved). -->
+          <div class="game" data-game="ranked"></div>
+        </section>
+
+        <section class="badge dashboard__badge" aria-labelledby="badge-title">
+          <h2 id="badge-title" class="visually-hidden">Your badge</h2>
+          <div class="badge__strip" aria-hidden="true">
+            <img src="/favicon.svg" alt="" width="20" height="20" />
+            <span>On-call staff</span>
+          </div>
+          <div class="badge__body">
+            <p class="badge__name" data-username></p>
+            <p class="badge__rank" data-rank-title>Intern</p>
+            <p class="badge__motto" data-rank-motto></p>
+            <dl class="badge__stats">
+              <div class="badge__stat">
+                <dt>Best round</dt>
+                <dd data-best>0</dd>
+              </div>
+              <div class="badge__stat">
+                <dt>Rounds played</dt>
+                <dd data-games>0</dd>
+              </div>
+            </dl>
+            <div class="badge__progress">
+              <div class="meter" aria-hidden="true"><span class="meter__fill" data-rank-meter></span></div>
+              <p class="badge__next" data-rank-next></p>
+            </div>
+          </div>
+        </section>
+
+        <section class="sheet dashboard__recent" aria-labelledby="recent-title">
+          <h2 id="recent-title" class="sheet__title">Recent rounds</h2>
+          <ol class="logbook" data-recent></ol>
+        </section>
+
+        <section class="sheet dashboard__leaderboard" aria-labelledby="leaderboard-title">
+          <h2 id="leaderboard-title" class="sheet__title">Leaderboard</h2>
+          <p class="sheet__note">Top 10 players by best round.</p>
+          <div data-leaderboard></div>
+        </section>
+      </div>
+    </main>
+
+    <footer class="site-footer" data-site-footer></footer>
+  </body>
+</html>

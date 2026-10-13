@@ -27,8 +27,8 @@
 import { $, el } from './dom.js';
 
 export const ROUND_MS = 10_000;
-const HOP_START_MS = 1400;
-const HOP_END_MS = 800;
+const HOP_START_MS = 1100;
+const HOP_END_MS = 600;
 const URGENT_MS = 3000;
 /** Pixels kept free along the board edges (the mounting holes live there). */
 const EDGE_GAP = 12;

@@ -11,12 +11,16 @@
  * Integration tests answer "does the deployed system work?".
  *
  * Run:
- *     BASE_URL=http://localhost:8080 node --test tests/integration/api.test.mjs
+ *     BASE_URL=http://localhost node --test tests/integration/api.test.mjs
  *
- * BASE_URL defaults to http://localhost:8080 (the production frontend
- * container, as started by docker-compose.prod.yml in the ci-test workflow).
- * http://localhost:5173 (dev stack, Vite proxy) works too. To test the bare
- * API without any frontend in front of it, add API_ONLY=1:
+ * BASE_URL defaults to http://localhost: the production stack's nginx proxy
+ * container on port 80 (docker-compose.prod.yml, as started by the ci-test
+ * workflow) -> frontend / backend -> Postgres. Other targets:
+ *     BASE_URL=http://localhost:5173      dev stack (Vite proxies /api/)
+ *     BASE_URL=https://localhost NODE_TLS_REJECT_UNAUTHORIZED=0
+ *                                         prod stack in HTTPS mode with a
+ *                                         self-signed certificate (CI only!)
+ * To test the bare API without any frontend in front of it, add API_ONLY=1:
  *     API_ONLY=1 BASE_URL=http://localhost:3000 node --test tests/integration/api.test.mjs
  *
  * Design notes
@@ -38,7 +42,7 @@ import assert from 'node:assert/strict';
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
-const BASE_URL = (process.env.BASE_URL || 'http://localhost:8080').replace(/\/+$/, '');
+const BASE_URL = (process.env.BASE_URL || 'http://localhost').replace(/\/+$/, '');
 // API_ONLY=1 when BASE_URL is the backend itself (e.g. http://localhost:3000):
 // there is no frontend there, so the HTML landing-page test is skipped.
 const API_ONLY = ['1', 'true', 'yes'].includes(String(process.env.API_ONLY || '').toLowerCase());
@@ -152,6 +156,19 @@ function assertSecureCookieAttributes(cookie) {
     'auth cookie must be SameSite=Lax (CSRF mitigation)',
   );
   assert.equal(cookie.attributes.path, '/', 'auth cookie must be scoped to Path=/');
+  // The "Secure" flag must match the scheme of the site (COOKIE_SECURE on the
+  // backend). This test's fetch() would accept the cookie either way, but a
+  // BROWSER drops a Secure cookie that arrives over plain http:// (logins
+  // "don't stick"), and a cookie without Secure on an HTTPS site could leak
+  // over an http:// link. So: http -> COOKIE_SECURE=false, https -> true.
+  const expectSecure = BASE_URL.startsWith('https:');
+  assert.equal(
+    cookie.attributes.secure === true,
+    expectSecure,
+    expectSecure
+      ? 'auth cookie must be Secure on an HTTPS site - set COOKIE_SECURE=true'
+      : 'auth cookie must NOT be Secure on a plain-HTTP site (browsers would drop it) - set COOKIE_SECURE=false',
+  );
 }
 
 /** Poll /api/health until the stack answers, so the suite can run right after a deploy. */

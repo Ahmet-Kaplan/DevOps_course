@@ -145,24 +145,26 @@ You need basic terminal use (`cd`, `ls`, editing a file) and basic Git (`clone`,
 
 ## Part 1: Theory first
 
-Read **[`docs/containers-and-docker.md`](docs/containers-and-docker.md)** before you type
-`docker compose up`. It explains what a container is from first principles, and every claim comes
-with a command you can run:
+![Virtual machines vs containers: each VM is a house with its own kernel; containers are apartments sharing one kernel](docs/images/slides/containers-03-vms-vs-containers.svg)
 
-| Chapter | Why it matters for this repo |
-|---------|------------------------------|
-| 1. Containers vs Docker | Docker is a toolchain; the isolation itself comes from the kernel |
-| 2. Namespaces | why each container has its own `localhost` and ports, and why your app is PID 1 |
-| 3. cgroups v2 | what `deploy.resources.limits` in `docker-compose.prod.yml` really does (and the OOM killer) |
-| 4. Overlay filesystem and layers | why the Dockerfiles copy `package*.json` before the source code |
-| 5. VMs vs containers | why we run containers *inside* a Google Cloud VM |
-| 6. Proof: the shared kernel | captured on our VM: Debian and Alpine containers print the VM's kernel |
-| 7. [How this repo uses these concepts](docs/containers-and-docker.md#7-how-this-repo-uses-these-concepts) | every production setting mapped to the kernel feature behind it |
-| 8. Review questions | 14 quiz questions with hidden answers |
+Read **[`docs/containers-and-docker.md`](docs/containers-and-docker.md)** before you type
+`docker compose up`: nine slides, about ten minutes, each with one command to try.
+
+| Slide | The idea |
+|:-:|---|
+| 1 | *It works on my machine*: the problem containers solve |
+| 2 | A container is a standard box: code, runtime, libraries, settings |
+| 3 | Virtual machines are houses, containers are apartments sharing one kernel |
+| 4 | An image is the recipe, a container is the cake |
+| 5 | Build, ship, run: Dockerfile -> image -> Docker Hub -> container |
+| 6 | Walls and meters: namespaces (what it can see) and cgroups (what it can use) |
+| 7 | Proof on our VM: three systems, one kernel |
+| 8 | Data lives in volumes, containers are disposable |
+| 9 | Many containers, one file: Docker Compose |
 
 > [!TIP]
-> Run the experiments on Linux, or later on your VM. Docker Desktop on macOS and Windows runs
-> containers inside a hidden VM, so some outputs differ (chapter 6.6 explains why).
+> Try the commands on Linux, or later on your VM. Docker Desktop on macOS and Windows runs
+> containers inside a hidden Linux VM, so slide 7's `uname -r` shows that VM's kernel, not yours.
 
 ## Part 2: Run it locally
 

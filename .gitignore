@@ -77,3 +77,7 @@ ansible/backups/
 ansible/.github_ci_sync
 # NOT ignored on purpose: ansible/secrets/vault.yml. It is encrypted, so it can
 # be committed (private repository); only .vault_pass above can open it.
+
+# Python bytecode caches (docs/images/src generators)
+__pycache__/
+*.pyc

@@ -253,7 +253,7 @@ host firewall such as `ufw` ever sees them. A published `3000:3000` would theref
 whole internet whatever `ufw` says, with only Google's firewall in the way. That is why the backend,
 frontend and database publish nothing: they talk on private Docker networks, and the proxy is the
 single entrance. Check it: `laptop$ curl -m 5 http://<VM-IP>:3000/api/health` times out.
-[Chapter 7 of the theory notes](../docs/containers-and-docker.md#72-networks--network-namespaces--bridges)
+[Walls and meters in the theory notes](../docs/containers-and-docker.md#6-walls-and-meters-namespaces-and-cgroups)
 explains the kernel side.
 
 </details>
